@@ -11,13 +11,20 @@ export function useApi(pathOrRef, intervalMs = 60000) {
   const loading = ref(true)
   const error = ref('')
   let timer = null
+  // 请求代际：每次 load() 发起都 +1，只有最新一次请求的结果才允许写回。
+  // 否则会出现“旧请求后返回、覆盖新请求结果”的竞态——比如天气卡切城市时，
+  // 旧城市那次慢请求晚于新城市请求返回，屏幕上就会挂着旧城市的数据
+  // （之前用户切到北京后预警区还挂着烟台的海阳预警，就是这个原因）。
+  let seq = 0
 
   async function load() {
     const p = getPath()
     if (!p) { loading.value = false; return }
+    const mySeq = ++seq
     try {
       const res = await fetch(p)
       const json = await res.json()
+      if (mySeq !== seq) return // 已有更新的请求在途，丢弃本次过期结果
       if (json && json.ok) {
         data.value = json.data
         error.value = ''
@@ -25,13 +32,22 @@ export function useApi(pathOrRef, intervalMs = 60000) {
         error.value = (json && json.error) || '接口返回异常'
       }
     } catch (e) {
+      if (mySeq !== seq) return
       error.value = '网络异常'
     } finally {
-      loading.value = false
+      if (mySeq === seq) loading.value = false
     }
   }
 
-  if (isRef(pathOrRef)) watch(pathOrRef, () => { loading.value = true; load() })
+  // 路径变了 = 查的东西变了（比如天气卡换城市）：先清掉旧数据，绝不让
+  // 旧城市的内容残留在屏幕上（哪怕新请求还没回来，也只显示“加载中…”）。
+  // 定时刷新走 load() 本身，不清数据（同一路径刷新不闪屏）。
+  if (isRef(pathOrRef)) watch(pathOrRef, () => {
+    data.value = null
+    error.value = ''
+    loading.value = true
+    load()
+  })
 
   onMounted(() => {
     load()

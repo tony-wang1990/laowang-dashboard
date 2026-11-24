@@ -25,6 +25,7 @@
         <div class="cond">
           <div class="cond-text">{{ data.text || weatherText(data.code) }}</div>
           <div class="label">湿度 {{ data.humidity }}% · 风速 {{ data.wind }} km/h</div>
+          <div class="label" v-if="data.today">今日最高 {{ Math.round(data.today.high) }}° · 最低 {{ Math.round(data.today.low) }}°</div>
         </div>
       </div>
       <div class="hours">
@@ -32,6 +33,17 @@
           <div class="label">{{ h.time }}</div>
           <div class="hour-temp">{{ Math.round(h.temp) }}°</div>
           <div class="label">{{ h.text || weatherText(h.code) }}</div>
+          <div class="hour-pop" v-if="h.pop != null">{{ h.pop }}%</div>
+          <div class="hour-pop empty" v-else>&nbsp;</div>
+        </div>
+      </div>
+      <div v-if="data.daily && data.daily.length" class="daily">
+        <div v-for="d in data.daily" :key="d.fullDate" class="day">
+          <div class="label day-label">{{ d.label }}</div>
+          <div class="day-cond">{{ weatherText(d.code) }}</div>
+          <div class="day-temp"><b>{{ Math.round(d.high) }}°</b><span class="day-low"> / {{ Math.round(d.low) }}°</span></div>
+          <div class="day-pop" v-if="d.pop != null">{{ d.pop }}%</div>
+          <div class="day-pop empty" v-else>&nbsp;</div>
         </div>
       </div>
       <WarningList :city="warnCity" head-text="天气预警" empty-text="当前无生效预警" />
@@ -93,4 +105,16 @@ function applyCity() {
 .hours { display: flex; gap: 4px; overflow-x: auto; padding-top: 12px; border-top: 1px solid #f1f4f8; }
 .hour { flex: 1; min-width: 52px; text-align: center; }
 .hour-temp { font-size: 15px; font-weight: 650; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
+.hour-pop { font-size: 11px; color: #0284c7; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.hour-pop.empty { visibility: hidden; }
+/* 7 日逐日预报：星期 + 状况 + 高温/低温 + 降水概率，和逐小时同一套紧凑风格 */
+.daily { display: flex; gap: 4px; padding-top: 10px; margin-top: 10px; border-top: 1px solid #f1f4f8; }
+.day { flex: 1; min-width: 0; text-align: center; }
+.day-label { font-weight: 600; color: var(--text-2); }
+.day-cond { font-size: 12px; color: var(--text-2); margin: 4px 0 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day-temp { font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.day-temp b { font-weight: 700; }
+.day-low { color: var(--text-3); }
+.day-pop { font-size: 11px; color: #0284c7; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.day-pop.empty { visibility: hidden; }
 </style>

@@ -605,19 +605,33 @@ function hourKeyInTimezone(tz) {
 
 async function forecastForPlace(place) {
   const d = await fetchJson(
-    `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&hourly=temperature_2m,weather_code&forecast_days=2&timezone=${encodeURIComponent(place.timezone)}`,
+    `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&hourly=temperature_2m,weather_code,precipitation_probability&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code&forecast_days=7&timezone=${encodeURIComponent(place.timezone)}`,
     { timeoutMs: 8000 }
   )
   const hourKey = (d.current && d.current.time ? d.current.time.slice(0, 13) + ':00' : hourKeyInTimezone(place.timezone))
   const idx = Math.max(0, d.hourly.time.findIndex((t) => t >= hourKey))
   const hours = (d.hourly.time.slice(idx, idx + 12) || []).map((t, i) => ({
-    time: t.slice(11, 16), temp: d.hourly.temperature_2m[idx + i], code: d.hourly.weather_code[idx + i]
+    time: t.slice(11, 16), temp: d.hourly.temperature_2m[idx + i], code: d.hourly.weather_code[idx + i],
+    pop: d.hourly.precipitation_probability?.[idx + i] ?? null
   }))
+  // 逐日 7 天（daily.time[0] 就是预报时区的今天）：日期/星期、高温/低温、状况码、降水概率
+  const week = '日一二三四五六'
+  const daily = (d.daily.time || []).slice(0, 7).map((date, i) => {
+    const wd = week[new Date(date + 'T12:00:00').getDay()]
+    return {
+      date: date.slice(5), fullDate: date,
+      label: i === 0 ? '今天' : i === 1 ? '明天' : i === 2 ? '后天' : '周' + wd,
+      weekday: '周' + wd,
+      high: d.daily.temperature_2m_max[i], low: d.daily.temperature_2m_min[i],
+      code: d.daily.weather_code[i], pop: d.daily.precipitation_probability_max?.[i] ?? null
+    }
+  })
+  const today = daily[0] ? { high: daily[0].high, low: daily[0].low } : null
   return ok({
     source: 'open-meteo', sourceName: 'Open-Meteo（免费免 key）',
     city: place.name, country: place.country, latitude: place.latitude, longitude: place.longitude,
     temp: d.current.temperature_2m, humidity: d.current.relative_humidity_2m,
-    wind: d.current.wind_speed_10m, code: d.current.weather_code, hours
+    wind: d.current.wind_speed_10m, code: d.current.weather_code, hours, today, daily
   })
 }
 
@@ -647,8 +661,11 @@ async function weatherFromQWeather() {
     wind: Number(now.now.windSpeed),
     code: null,
     text: now.now.text,
+    // 和风路径只有逐小时（无 7 日接口调用），today/daily 置空，前端按缺失处理；
+    // 有 key 的用户极少，默认走 Open-Meteo。
+    today: null, daily: [],
     hours: (hourly.hourly || []).slice(0, 12).map((h) => ({
-      time: h.fxTime.slice(11, 16), temp: Number(h.temp), code: null, text: h.text
+      time: h.fxTime.slice(11, 16), temp: Number(h.temp), code: null, text: h.text, pop: null
     }))
   })
 }
