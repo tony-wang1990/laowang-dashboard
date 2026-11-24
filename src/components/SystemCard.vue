@@ -7,46 +7,53 @@
     </div>
     <div v-if="loading" class="loading">加载中…</div>
     <div v-else-if="!data || error" class="empty">暂无数据</div>
-    <div v-else>
-      <div class="grid">
-        <div class="metric">
-          <div class="label">CPU 负载（1 分钟）</div>
-          <div class="big-num">{{ data.load1 }}<small>/ {{ data.cpuCount }} 核</small></div>
-        </div>
-        <div class="metric">
-          <div class="label">运行时间</div>
-          <div class="big-num" style="font-size: 22px; line-height: 1.5">{{ fmtUptime(data.uptimeSec) }}</div>
-        </div>
-      </div>
-      <div class="meter">
-        <div class="meter-head"><span class="label">内存</span><span class="meter-val">{{ data.memUsedMB }} / {{ data.memTotalMB }} MB · {{ data.memUsedPct }}%</span></div>
-        <div class="bar"><i :style="{ width: data.memUsedPct + '%', background: 'var(--emerald)' }"></i></div>
-      </div>
-      <div class="meter" v-if="data.disk">
-        <div class="meter-head"><span class="label">磁盘 /</span><span class="meter-val">{{ data.disk.usedGB }} / {{ data.disk.totalGB }} GB · {{ data.disk.usedPct }}%</span></div>
-        <div class="bar"><i :style="{ width: data.disk.usedPct + '%', background: 'var(--blue)' }"></i></div>
-      </div>
-      <div class="foot">
-        <span class="label">{{ data.cpuModel }}</span>
-        <span class="label" v-if="data.ip">{{ data.ip.ip }} · {{ data.ip.city || data.ip.country || '' }}</span>
-        <span class="label" v-else>Node {{ data.node }}</span>
+    <!-- KPanel 式两列定义列表：标签小字在上、值清晰，行间分隔线，关键值绝不断行 -->
+    <div v-else class="dl">
+      <div class="dl-item" v-for="f in fields" :key="f.label">
+        <div class="label">{{ f.label }}</div>
+        <div class="dl-val" :title="f.title || f.value">{{ f.value }}</div>
       </div>
     </div>
   </section>
 </template>
 
 <script setup>
+import { computed } from 'vue'
 defineProps({ config: { type: Object, default: () => ({}) }, title: { type: String, default: '' } })
 import { useApi, fmtUptime } from '../useApi.js'
-const { data, loading, error } = useApi('/api/system', 60000)
+// /api/ops/host 是只读公开接口：systemInfo + 磁盘 + 公网 IP + 内核 + 操作系统
+const { data, loading, error } = useApi('/api/ops/host', 60000)
+
+function fmt1(n) {
+  if (n == null || isNaN(n)) return '—'
+  return Number(n).toFixed(1)
+}
+
+const fields = computed(() => {
+  const d = data.value
+  if (!d) return []
+  const ip = d.ip ? `${d.ip.ip} · ${[d.ip.city, d.ip.country].filter(Boolean).join(' ')}` : '—'
+  return [
+    { label: '操作系统', value: d.osType || d.platform || '—' },
+    { label: '内核', value: d.kernel || '—' },
+    { label: 'CPU 型号', value: d.cpuModel || '—' },
+    { label: 'CPU 规格', value: `${d.cpuCount} 核` },
+    { label: '系统负载', value: `${d.load1} / ${d.load5} / ${d.load15}`, title: '1 / 5 / 15 分钟负载' },
+    { label: '运行时间', value: fmtUptime(d.uptimeSec) },
+    { label: '公网 IP', value: ip },
+    { label: '内存', value: `${fmt1(d.memUsedMB)} / ${fmt1(d.memTotalMB)} MB · ${d.memUsedPct}%` },
+    { label: '磁盘', value: d.disk ? `${fmt1(d.disk.usedGB)} / ${fmt1(d.disk.totalGB)} GB · ${d.disk.usedPct}%` : '—' }
+  ]
+})
 </script>
 
 <style scoped>
-.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
-.metric .big-num { margin-top: 4px; }
-.meter { margin-bottom: 12px; }
-.meter-head { display: flex; justify-content: space-between; margin-bottom: 6px; }
-.meter-val { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.foot { display: flex; justify-content: space-between; gap: 12px; margin-top: 14px; padding-top: 12px; border-top: 1px solid #f1f4f8; }
-.foot .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl { display: grid; grid-template-columns: 1fr 1fr; column-gap: 20px; }
+.dl-item { padding: 6px 0; border-top: 1px solid #f1f4f8; min-width: 0; }
+.dl-item:nth-child(-n+2) { border-top: none; }
+.dl-val {
+  font-size: 14px; font-weight: 550; margin-top: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
 </style>

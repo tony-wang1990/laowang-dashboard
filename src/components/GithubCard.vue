@@ -37,14 +37,15 @@ const totalStars = computed(() => (data.value?.repos || []).reduce((s, r) => s +
 </script>
 
 <style scoped>
-.repo { padding: 12px 0; border-top: 1px solid #f1f4f8; }
+.repo { padding: 10px 0; border-top: 1px solid #f1f4f8; }
 .repo:first-of-type { border-top: none; padding-top: 0; }
 .repo-head { display: flex; align-items: center; gap: 8px; }
 .repo-name { font-weight: 650; font-size: 14.5px; color: var(--text); }
 .repo-name:hover { color: var(--blue); text-decoration: none; }
 .repo-desc { font-size: 13px; color: var(--text-2); margin-top: 4px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.repo-meta { display: flex; gap: 14px; margin-top: 6px; font-size: 12.5px; color: var(--text-2); align-items: baseline; flex-wrap: wrap; }
-.repo-meta .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.repo-meta { display: flex; gap: 14px; margin-top: 6px; font-size: 12.5px; color: var(--text-2); align-items: baseline; flex-wrap: nowrap; }
+.repo-meta > span { flex: none; white-space: nowrap; }
+.repo-meta .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .total { margin-top: 12px; padding-top: 12px; border-top: 1px solid #f1f4f8; font-size: 13.5px; color: var(--text-2); }
 .total strong { color: var(--text); font-size: 16px; }
 </style>

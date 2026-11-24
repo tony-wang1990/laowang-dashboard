@@ -4,9 +4,9 @@
     <div v-if="loading" class="loading">加载中…</div>
     <div v-else-if="!data || error || !data.items?.length" class="empty">暂无数据（检查订阅地址是否正确）</div>
     <div v-else>
-      <div class="row" v-for="n in data.items" :key="n.url + n.title">
+      <div class="row" v-for="n in items" :key="n.url + n.title">
         <span class="grow" :title="n.title"><a :href="n.url" target="_blank" rel="noopener">{{ n.title }}</a></span>
-        <span class="label" v-if="n.date">{{ shortDate(n.date) }}</span>
+        <span class="label date" v-if="n.date">{{ shortDate(n.date) }}</span>
       </div>
     </div>
   </div>
@@ -23,6 +23,8 @@ const { data, loading, error } = useApi(
   computed(() => '/api/rss?url=' + encodeURIComponent(feedUrl.value)),
   10 * 60 * 1000
 )
+// 只展示前 8 条，和科技资讯一致；卡片太长会把页面撑得太高
+const items = computed(() => (data.value?.items || []).slice(0, 8))
 
 function shortDate(d) {
   const t = new Date(d)
@@ -32,10 +34,9 @@ function shortDate(d) {
 </script>
 
 <style scoped>
+.row { padding: 12px 0; }
 .row a { color: var(--text); font-weight: 550; }
+/* 标题单行省略；日期固定宽度右对齐，不随标题长短晃动 */
+.row .date { flex: none; width: 100px; text-align: right; font-variant-numeric: tabular-nums; }
 .row a:hover { color: var(--blue); text-decoration: none; }
-.row .grow {
-  white-space: normal; display: -webkit-box; -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical; overflow: hidden; line-height: 1.45;
-}
 </style>

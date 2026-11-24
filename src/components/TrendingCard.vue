@@ -27,6 +27,7 @@ const { data, loading, error } = useApi('/api/trending', 10 * 60 * 1000)
 </script>
 
 <style scoped>
+.row { padding: 12px 0; }
 .row a { color: var(--text); font-weight: 600; }
 .row a:hover { color: var(--blue); text-decoration: none; }
 .row .grow { white-space: normal; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }

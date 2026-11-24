@@ -60,7 +60,7 @@
         :key="item.i"
         :x="item.x" :y="item.y" :w="item.w" :h="item.h" :i="item.i"
       >
-        <div class="grid-wrap" :class="{ 'vue-draggable-handle': editMode }">
+        <div class="grid-wrap" :data-i="item.i" :class="{ 'vue-draggable-handle': editMode }">
           <div class="grid-tools" v-if="editMode">
             <button class="icon-btn" @click.stop="openEditor(item)" title="编辑卡片">⚙</button>
             <button class="icon-btn danger" @click.stop="removeCard(item.i)" title="删除卡片">×</button>
@@ -113,7 +113,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import HeaderBar from './components/HeaderBar.vue'
 import WeatherCard from './components/WeatherCard.vue'
 import SystemCard from './components/SystemCard.vue'
@@ -128,18 +128,19 @@ import QuickLinks from './components/QuickLinks.vue'
 import NotesCard from './components/NotesCard.vue'
 import TextCard from './components/TextCard.vue'
 import MetricCard from './components/MetricCard.vue'
+import StatCard from './components/StatCard.vue'
 import ChartCard from './components/ChartCard.vue'
 import RssCard from './components/RssCard.vue'
 import CustomApiCard from './components/CustomApiCard.vue'
 import IframeCard from './components/IframeCard.vue'
 import OpsView from './components/OpsView.vue'
-import { CARD_TYPES, cardTypeOf, newCard, DEFAULT_LAYOUT } from './cards.js'
+import { CARD_TYPES, cardTypeOf, newCard, DEFAULT_LAYOUT, STAT_CARDS } from './cards.js'
 
 const COMPONENTS = {
   weather: WeatherCard, system: SystemCard, docker: DockerCard, uptime: UptimeCard,
   crypto: CryptoCard, rates: RatesCard, github: GithubCard, trending: TrendingCard,
   news: NewsCard, quicklinks: QuickLinks, notes: NotesCard,
-  text: TextCard, metric: MetricCard, chart: ChartCard, rss: RssCard,
+  text: TextCard, metric: MetricCard, stat: StatCard, chart: ChartCard, rss: RssCard,
   custom: CustomApiCard, iframe: IframeCard
 }
 function componentOf(type) { return COMPONENTS[type] || TextCard }
@@ -155,27 +156,68 @@ const layoutNeedLogin = ref(false) // 服务端保存布局被 401 拒绝时提�
 
 function clone(v) { return JSON.parse(JSON.stringify(v)) }
 
+// 布局迁移（幂等）：
+// 1) 旧默认布局里的 metric-1（关键指标）换成 5 张 KPanel 式单指标卡，
+//    原来那一行及以下的行整体下移 2 行腾地方；用户自己删掉 metric-1 的不触发，
+//    已有 stat 卡的不重复加；其它卡片的配置和位置原样保留。
+// 2) quicklinks-1 旧 h=2 装不下 7 个入口，改成 h=3，下面的卡下移 1 行。
+function migrateLayout(items) {
+  let changed = false
+  const hasStat = items.some((it) => it.type === 'stat')
+  const mi = items.findIndex((it) => it.i === 'metric-1')
+  if (!hasStat && mi >= 0) {
+    const old = items[mi]
+    const rowY = old.y
+    items.forEach((it) => { if (it !== old && it.y >= rowY) it.y += 2 })
+    items.splice(mi, 1)
+    STAT_CARDS.forEach((s) => items.push({ ...s, y: rowY, config: { ...s.config }, moved: false }))
+    changed = true
+  }
+  const qi = items.findIndex((it) => it.i === 'quicklinks-1')
+  if (qi >= 0 && items[qi].h === 2) {
+    const q = items[qi]
+    const bottom = q.y + q.h
+    items.forEach((it) => { if (it !== q && it.y >= bottom) it.y += 1 })
+    q.h = 3
+    changed = true
+  }
+  // 3) 资讯和趋势图补到 h=4：资讯 8 条需要 4 行高，趋势图跟着加高后
+  //    上面一行两边一样高，单指标那一行才不会被挤成两排；位置由挂载时的
+  //    compact 自动理顺，不用手动移。
+  for (const id of ['news-1', 'chart-1']) {
+    const it = items.find((x) => x.i === id)
+    if (it && it.h === 3) { it.h = 4; changed = true }
+  }
+  return changed
+}
+
 async function loadLayout() {
+  let items = null
   // 1) 本机 localStorage 优先
   try {
     const raw = localStorage.getItem(LAYOUT_KEY)
     if (raw) {
       const parsed = JSON.parse(raw)
-      if (Array.isArray(parsed) && parsed.length) { layout.value = parsed; return }
+      if (Array.isArray(parsed) && parsed.length) items = parsed
     }
   } catch { /* 忽略 */ }
   // 2) 服务端 /api/layout
-  try {
-    const res = await fetch('/api/layout')
-    const json = await res.json()
-    if (json?.ok && Array.isArray(json.data.layout) && json.data.layout.length) {
-      layout.value = json.data.layout
-      localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout.value))
-      return
-    }
-  } catch { /* 忽略 */ }
+  if (!items) {
+    try {
+      const res = await fetch('/api/layout')
+      const json = await res.json()
+      if (json?.ok && Array.isArray(json.data.layout) && json.data.layout.length) {
+        items = json.data.layout
+        localStorage.setItem(LAYOUT_KEY, JSON.stringify(items))
+      }
+    } catch { /* 忽略 */ }
+  }
   // 3) 默认布局
-  layout.value = clone(DEFAULT_LAYOUT)
+  if (!items) items = clone(DEFAULT_LAYOUT)
+  // 旧布局迁移（新卡默认出现、快捷入口加高），改完落盘
+  const changed = migrateLayout(items)
+  layout.value = items
+  if (changed) persist()
 }
 
 let saveTimer = null
@@ -205,6 +247,65 @@ function onLayoutUpdated(newLayout) {
     if (n) { item.x = n.x; item.y = n.y; item.w = n.w; item.h = n.h }
   })
   persist()
+}
+
+// ---------- 卡片自适应高度 ----------
+// 原则：任何卡片的内容（长标题、长文本、多行列表）都不能超出卡片区域。
+// 卡片本身 height:auto + min-height:100%（见下方样式），内容变高卡片就跟着
+// 长高；ResizeObserver 监听到后，把对应网格项的 h 按行高换算调大，
+// 下面的卡自动下移。只自动长高、不自动缩短，用户手动调大的尺寸不会
+// 被收回去；每次调整都走 persist() 落盘。
+const ROW_H = 100, MARGIN_Y = 20, MAX_GRID_H = 12
+let cardObserver = null, gridMutObserver = null, autoResizeTimer = null
+const observedCards = new WeakSet()
+
+function rowsForHeight(px) {
+  // 网格项 h 行的高度 = h*100 + (h-1)*20；反推行数
+  return Math.max(1, Math.ceil((px + MARGIN_Y) / (ROW_H + MARGIN_Y)))
+}
+function autoResizePass() {
+  let changed = false
+  document.querySelectorAll('.vue-grid-item .grid-wrap > .card').forEach((card) => {
+    const id = card.closest('.grid-wrap')?.dataset.i
+    if (!id) return
+    const item = layout.value.find((it) => it.i === id)
+    if (!item) return
+    const need = rowsForHeight(card.offsetHeight)
+    if (need > item.h) {
+      item.h = Math.min(need, MAX_GRID_H)
+      changed = true
+    }
+  })
+  if (changed) {
+    // 关键：vue-grid-layout 的 layout watcher 是浅监听，直接改 item.h 不会
+    // 触发它的 compact()，下面的卡不会下移；换一个数组引用才会触发
+    // watcher → compact → 下面的卡自动下移 → 触发 layout-updated 回写。
+    layout.value = [...layout.value]
+    persist()
+  }
+}
+function scheduleAutoResize() {
+  clearTimeout(autoResizeTimer)
+  autoResizeTimer = setTimeout(autoResizePass, 150)
+}
+function observeCards() {
+  if (!cardObserver) return
+  document.querySelectorAll('.vue-grid-item .grid-wrap > .card').forEach((card) => {
+    if (observedCards.has(card)) return
+    observedCards.add(card)
+    cardObserver.observe(card)
+  })
+}
+function setupAutoResize() {
+  cardObserver = new ResizeObserver(() => scheduleAutoResize())
+  observeCards()
+  const grid = document.querySelector('.vue-grid-layout')
+  if (grid) {
+    // 新增 / 删除卡片时重新扫描
+    gridMutObserver = new MutationObserver(() => { observeCards(); scheduleAutoResize() })
+    gridMutObserver.observe(grid, { childList: true, subtree: true })
+  }
+  scheduleAutoResize()
 }
 
 function addCard(type) {
@@ -240,11 +341,17 @@ function closeEditor() { editing.value = null }
 
 onMounted(() => {
   loadLayout()
+  nextTick(setupAutoResize)
   // 支持 #ops 深链直达运维区
   if (window.location.hash === '#ops') view.value = 'ops'
   window.addEventListener('hashchange', () => {
     view.value = window.location.hash === '#ops' ? 'ops' : 'dashboard'
   })
+})
+onUnmounted(() => {
+  cardObserver?.disconnect()
+  gridMutObserver?.disconnect()
+  clearTimeout(autoResizeTimer)
 })
 watch(view, (v) => {
   const hash = v === 'ops' ? '#ops' : '#'
@@ -297,7 +404,9 @@ watch(view, (v) => {
 .grid-wrap { position: relative; height: 100%; }
 .grid-wrap.vue-draggable-handle { cursor: grab; }
 .grid-wrap.vue-draggable-handle:active { cursor: grabbing; }
-.grid-wrap > .card { height: 100%; }
+/* 卡片自适应高度：高度由内容撑开（至少占满网格项），内容变高时
+   ResizeObserver 会把网格项的 h 调大，绝不截断、不重叠 */
+.grid-wrap > .card { height: auto; min-height: 100%; }
 .grid-tools {
   position: absolute; top: 10px; right: 12px; z-index: 5;
   display: flex; gap: 2px; background: rgba(255, 255, 255, 0.9);

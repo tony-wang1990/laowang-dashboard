@@ -14,7 +14,7 @@
     <div v-else>
       <div class="row" v-for="n in items" :key="n.url + n.title">
         <span class="grow" :title="n.title"><a :href="n.url" target="_blank" rel="noopener">{{ n.title }}</a></span>
-        <span class="label" v-if="n.points != null">▲ {{ n.points }}</span>
+        <span class="label points" v-if="n.points != null">▲ {{ n.points }}</span>
       </div>
     </div>
   </section>
@@ -33,15 +33,14 @@ const items = computed(() => {
 </script>
 
 <style scoped>
+.row { padding: 12px 0; }
 .tab {
   border: none; background: none; font-size: 12px; color: var(--text-3);
   cursor: pointer; padding: 4px 8px; border-radius: 99px;
 }
 .tab.active { background: #eff6ff; color: var(--blue); font-weight: 600; }
 .row a { color: var(--text); font-weight: 550; }
+/* 标题单行省略；分数固定不换行 */
+.row .points { flex: none; white-space: nowrap; }
 .row a:hover { color: var(--blue); text-decoration: none; }
-.row .grow {
-  white-space: normal; display: -webkit-box; -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical; overflow: hidden; line-height: 1.45;
-}
 </style>

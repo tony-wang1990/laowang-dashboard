@@ -28,15 +28,16 @@ const links = [
 </script>
 
 <style scoped>
-.links { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.links { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .link {
   display: flex; align-items: center; gap: 10px;
-  padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px;
+  padding: 9px 12px; border: 1px solid var(--border); border-radius: 12px;
   color: var(--text);
+  min-width: 0;
 }
 .link:hover { text-decoration: none; border-color: #cbd5e1; box-shadow: var(--shadow); }
 .link-icon {
-  width: 34px; height: 34px; border-radius: 10px; flex: none;
+  width: 32px; height: 32px; border-radius: 10px; flex: none;
   display: flex; align-items: center; justify-content: center;
   font-size: 15px; font-weight: 700; color: var(--text-2);
 }

@@ -1,5 +1,5 @@
 <template>
-  <section class="card"><div class="card-head"><span class="card-dot" style="background: var(--blue)"></span><span class="card-title">{{ title || '趋势图表' }}</span></div>
+  <section class="card chart-card"><div class="card-head"><span class="card-dot" style="background: var(--blue)"></span><span class="card-title">{{ title || '趋势图表' }}</span></div>
   <div class="chart-wrap">
     <div v-if="loading" class="loading">加载中…</div>
     <div v-else-if="!data || error || !data.points || data.points.length < 2" class="empty">
@@ -68,7 +68,10 @@ onUnmounted(() => { if (chart) chart.destroy() })
 </script>
 
 <style scoped>
-.chart-box { position: relative; height: 190px; }
-.chart-box canvas { width: 100% !important; height: 170px !important; }
+/* 图表区随卡片高度伸缩：卡片变高时曲线跟着长大，不留大片空白 */
+.chart-card { display: flex; flex-direction: column; }
+.chart-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.chart-box { flex: 1; min-height: 170px; position: relative; }
+.chart-box canvas { width: 100% !important; height: 100% !important; }
 .chart-src { margin-top: 6px; }
 </style>
