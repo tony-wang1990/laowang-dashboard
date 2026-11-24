@@ -3,7 +3,10 @@
  * fields：编辑抽屉里的表单字段（kind: text | textarea | select）。
  */
 export const CARD_TYPES = [
-  { type: 'weather', name: '天气', desc: '上海实时天气 + 未来 12 小时', color: 'var(--cyan)', w: 4, h: 3, fields: [] },
+  { type: 'weather', name: '天气', desc: '任意城市实时天气 + 未来 12 小时', color: 'var(--cyan)', w: 4, h: 3,
+    fields: [
+      { key: 'city', label: '城市', kind: 'text', placeholder: '上海（留空默认上海，如：烟台 / 廊坊 / Los Angeles）' }
+    ] },
   { type: 'system', name: '服务器状态', desc: 'CPU、内存、磁盘、运行时间、公网 IP', color: 'var(--emerald)', w: 4, h: 3, fields: [] },
   { type: 'docker', name: 'Docker 容器', desc: 'VPS 上的容器列表与状态', color: 'var(--violet)', w: 4, h: 3, fields: [] },
   { type: 'uptime', name: '站点监测', desc: '三个站点的在线状态与延迟', color: 'var(--emerald)', w: 4, h: 2, fields: [] },

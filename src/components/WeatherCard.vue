@@ -2,7 +2,7 @@
   <section class="card card-fill">
     <div class="card-head">
       <span class="card-dot" style="background: var(--cyan)"></span>
-      <span class="card-title">{{ title || '上海天气' }}</span>
+      <span class="card-title">{{ data?.city ? data.city + '天气' : (title || '上海天气') }}</span>
       <span class="card-sub">{{ data?.sourceName || 'Open-Meteo' }}</span>
     </div>
     <div v-if="loading" class="loading">加载中…</div>
@@ -27,9 +27,15 @@
 </template>
 
 <script setup>
-defineProps({ config: { type: Object, default: () => ({}) }, title: { type: String, default: '' } })
+import { computed } from 'vue'
+const props = defineProps({ config: { type: Object, default: () => ({}) }, title: { type: String, default: '' } })
 import { useApi, weatherText } from '../useApi.js'
-const { data, loading, error } = useApi('/api/weather', 5 * 60 * 1000)
+// 城市改了自动重拉：空 = 默认上海
+const apiPath = computed(() => {
+  const city = (props.config.city || '').trim()
+  return city ? `/api/weather?city=${encodeURIComponent(city)}` : '/api/weather'
+})
+const { data, loading, error } = useApi(apiPath, 5 * 60 * 1000)
 </script>
 
 <style scoped>

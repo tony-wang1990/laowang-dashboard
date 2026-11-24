@@ -568,23 +568,84 @@ async function githubTrending() {
   })
 }
 
-// ---------- 天气：Open-Meteo 默认；有 QWEATHER_KEY 时用和风（可选配置） ----------
-async function weatherFromOpenMeteo() {
-  const d = await fetchJson(
-    'https://api.open-meteo.com/v1/forecast?latitude=31.23&longitude=121.47&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&hourly=temperature_2m,weather_code&forecast_days=2&timezone=Asia%2FShanghai',
+// ---------- 天气：Open-Meteo 默认；有 QWEATHER_KEY 且未指定城市时用和风（可选配置） ----------
+const SHANGHAI = { name: '上海', country: '中国', latitude: 31.23, longitude: 121.47, timezone: 'Asia/Shanghai' }
+
+// 城市名 -> 经纬度。优先 Nominatim（中文名支持好，免 key；1 秒限速由 10 分钟天气缓存兜底）；
+// 失败时用 Open-Meteo 地理编码兜底；都失败则抛错由上层回落上海。
+const CITY_TYPES = new Set(['country', 'state', 'city', 'town', 'village', 'municipality', 'county', 'district', 'borough', 'suburb'])
+async function geocodeCity(city) {
+  // 1) Nominatim（OpenStreetMap）
+  try {
+    const { text } = await safeFetchText(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(city)}&format=json&limit=3&accept-language=zh`,
+      { timeoutMs: 8000, headers: { 'User-Agent': 'laowang-dashboard' } }
+    )
+    const list = JSON.parse(text)
+    // 只接受城市级地点：行政边界，或 addresstype 是城市/城镇/区县；不要把模糊匹配到的景点、栈道等地物当成城市
+    const cityLike = (Array.isArray(list) ? list : []).filter((r) =>
+      r.class === 'boundary' || CITY_TYPES.has(r.addresstype)
+    )
+    if (cityLike.length) {
+      const best = [...cityLike].sort((a, b) => (b.importance || 0) - (a.importance || 0))[0]
+      const segs = String(best.display_name || '').split(/[,，]/)
+      const raw = (segs[0] || '').split(';')[0].split('/')[0].trim()
+      const name = raw.replace(/市$/, '') || city
+      const country = (segs[segs.length - 1] || '').split(';')[0].trim()
+      return { name, country, latitude: Number(best.lat), longitude: Number(best.lon), timezone: 'auto' }
+    }
+  } catch { /* 掉到 Open-Meteo 兜底 */ }
+  // 2) Open-Meteo 地理编码（英文名准；中文名取人口最多的结果）
+  const { text } = await safeFetchText(
+    `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=5&language=zh&format=json`,
     { timeoutMs: 8000 }
   )
-  const now = new Date()
-  const hourKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:00`
+  const d = JSON.parse(text)
+  // 只接受居民点 / 行政区（feature_code 以 PPL/ADM 开头），不要地物
+  const results = (d.results || []).filter((r) => r.latitude != null && r.longitude != null && /^(PPL|ADM)/.test(r.feature_code || ''))
+  if (!results.length) throw new Error('未找到城市 ' + city)
+  const best = [...results].sort((a, b) => (b.population || 0) - (a.population || 0))[0]
+  return { name: best.name, country: best.country || '', latitude: best.latitude, longitude: best.longitude, timezone: best.timezone || 'auto' }
+}
+
+// 目标时区的当前小时（预报时间按目标时区返回，不能用服务器本地时间对）
+function hourKeyInTimezone(tz) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' }).formatToParts(new Date())
+    const get = (t) => parts.find((p) => p.type === t)?.value
+    return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:00`
+  } catch {
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:00`
+  }
+}
+
+async function forecastForPlace(place) {
+  const d = await fetchJson(
+    `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&hourly=temperature_2m,weather_code&forecast_days=2&timezone=${encodeURIComponent(place.timezone)}`,
+    { timeoutMs: 8000 }
+  )
+  const hourKey = (d.current && d.current.time ? d.current.time.slice(0, 13) + ':00' : hourKeyInTimezone(place.timezone))
   const idx = Math.max(0, d.hourly.time.findIndex((t) => t >= hourKey))
   const hours = (d.hourly.time.slice(idx, idx + 12) || []).map((t, i) => ({
     time: t.slice(11, 16), temp: d.hourly.temperature_2m[idx + i], code: d.hourly.weather_code[idx + i]
   }))
   return ok({
     source: 'open-meteo', sourceName: 'Open-Meteo（免费免 key）',
-    city: '上海', temp: d.current.temperature_2m, humidity: d.current.relative_humidity_2m,
+    city: place.name, country: place.country, latitude: place.latitude, longitude: place.longitude,
+    temp: d.current.temperature_2m, humidity: d.current.relative_humidity_2m,
     wind: d.current.wind_speed_10m, code: d.current.weather_code, hours
   })
+}
+
+async function weatherFromOpenMeteo(city) {
+  if (city) {
+    try {
+      const place = await geocodeCity(city)
+      return await forecastForPlace(place)
+    } catch { /* 城市解析不到 / 接口异常 -> 回落上海 */ }
+  }
+  return forecastForPlace(SHANGHAI)
 }
 
 async function weatherFromQWeather() {
@@ -609,11 +670,14 @@ async function weatherFromQWeather() {
   })
 }
 
-async function weather() {
+async function weather(req, url) {
+  const city = (url?.searchParams?.get('city') || '').trim()
+  // 指定城市时一律走 Open-Meteo（和风只认 locationId，不认城市名）
+  if (city) return weatherFromOpenMeteo(city)
   if (process.env.QWEATHER_KEY) {
     try { return await weatherFromQWeather() } catch (e) { /* 和风失败则回落到 Open-Meteo */ }
   }
-  return weatherFromOpenMeteo()
+  return weatherFromOpenMeteo('')
 }
 
 // ---------- 布局存储 ----------
@@ -683,7 +747,7 @@ const routes = {
     const d = await fetchJson('https://api.frankfurter.app/latest?from=USD&to=CNY,EUR,HKD,JPY', { timeoutMs: 8000 })
     return ok({ base: 'USD', date: d.date, rates: d.rates })
   }),
-  '/api/weather': () => cached('weather', 600_000, weather),
+  '/api/weather': (req, url) => cached('weather:' + ((url?.searchParams?.get('city') || '').trim() || 'default'), 600_000, () => weather(req, url)),
   '/api/news': () => cached('news', 300_000, async () => {
     const out = { hn: [], sspai: [] }
     try {

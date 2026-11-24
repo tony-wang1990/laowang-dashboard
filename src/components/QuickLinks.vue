@@ -21,7 +21,7 @@ const links = [
   { name: '订阅转换', desc: 'sub.199060.xyz', url: 'https://sub.199060.xyz/', icon: '转', bg: '#eff6ff' },
   { name: '老王导航', desc: 'www.199060.xyz', url: 'https://www.199060.xyz/', icon: '导', bg: '#ecfdf5' },
   { name: 'GitHub', desc: 'tony-wang1990', url: 'https://github.com/tony-wang1990', icon: 'G', bg: '#f1f5f9' },
-  { name: 'NPM 管理', desc: '67.215.229.127:81', url: 'http://67.215.229.127:81/', icon: 'N', bg: '#f5f3ff' },
+  { name: 'NPM 管理', desc: 'npm.199060.xyz', url: 'https://npm.199060.xyz/', icon: 'N', bg: '#f5f3ff' },
   { name: 'Hacker News', desc: 'news.ycombinator.com', url: 'https://news.ycombinator.com/', icon: 'H', bg: '#fff7ed' },
   { name: '少数派', desc: 'sspai.com', url: 'https://sspai.com/', icon: '派', bg: '#fdf2f8' }
 ]
