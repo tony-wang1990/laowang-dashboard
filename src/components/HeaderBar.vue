@@ -7,7 +7,7 @@
     <div class="hero-left">
       <div class="greet">{{ greeting }}，yatao</div>
       <div class="clock">{{ time }}</div>
-      <div class="date">{{ dateStr }} · {{ weekday }} · 上海</div>
+      <div class="date">{{ dateStr }} · {{ weekday }} · {{ props.city }}</div>
     </div>
     <div class="hero-right">
       <form class="search" @submit.prevent="doSearch">
@@ -26,6 +26,10 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useApi } from '../useApi.js'
+
+// 顶栏地点：跟第一张天气卡的配置城市走（App.vue 传进来；空 = 没配城市，回落“上海”）
+// 注意：模板里用 props.city，不解构——解构会丢响应式，天气卡换城市后顶栏不会跟着变
+const props = defineProps({ city: { type: String, default: '上海' } })
 
 const { data: quote, loading: quoteLoading } = useApi('/api/quote', 10 * 60 * 1000)
 

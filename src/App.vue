@@ -1,7 +1,13 @@
 <template>
   <div class="page">
     <nav class="topnav">
-      <div class="brand"><span class="brand-dot"></span>老王数据看板</div>
+      <div class="brand">
+        <span class="brand-badge" aria-hidden="true">王</span>
+        <span class="brand-text">
+          <span class="brand-name">老王数据看板</span>
+          <span class="brand-sub">LAOWANG DASHBOARD</span>
+        </span>
+      </div>
       <div class="nav-tabs">
         <button class="nav-tab" :class="{ active: view === 'dashboard' }" @click="view = 'dashboard'">数据看板</button>
         <button class="nav-tab" :class="{ active: view === 'ops' }" @click="view = 'ops'">服务器看板</button>
@@ -9,7 +15,7 @@
     </nav>
 
     <template v-if="view === 'dashboard'">
-    <HeaderBar />
+    <HeaderBar :city="heroCity" />
 
     <!-- 工具栏：查看态 / 编辑态 -->
     <div class="toolbar">
@@ -153,6 +159,14 @@ const editMode = ref(false)
 const showAdd = ref(false)
 const editing = ref(null)
 const savedAt = ref('')
+
+// 顶栏日期后的地点：跟第一张天气卡的配置城市走（空 = 没配城市，回落“上海”）；
+// 天气卡本身的城市逻辑不动，这里只读 config.city。天气卡换城市（update:city）
+// 会改写 config.city，computed 自动跟着变。
+const heroCity = computed(() => {
+  const w = layout.value.find((it) => it.type === 'weather')
+  return ((w?.config?.city) || '').trim() || '上海'
+})
 
 // ---------- 窄屏堆叠 ----------
 // 视口 < 640px 时 12 列网格会把 w=4 的卡压到约 120px 宽，值被省略成一两个字。
@@ -536,8 +550,20 @@ watch(view, (v) => {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
   margin-bottom: 20px;
 }
-.brand { display: flex; align-items: center; gap: 9px; font-size: 17px; font-weight: 750; letter-spacing: 0.01em; }
-.brand-dot { width: 11px; height: 11px; border-radius: 4px; background: var(--blue); display: inline-block; }
+/* 品牌区：渐变徽章（“王”字徽记）+ 两行字标（中文名 + 字母间距拉开的英文副标），
+   浅色但有分量——门面升级，不只是换颜色 */
+.brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.brand-badge {
+  width: 36px; height: 36px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #2563eb 0%, #06b6d4 55%, #7c3aed 100%);
+  color: #fff; font-size: 20px; font-weight: 800; line-height: 1;
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.30), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.brand-text { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.brand-name { font-size: 17px; font-weight: 800; letter-spacing: 0.03em; color: var(--text); white-space: nowrap; }
+.brand-sub { font-size: 9px; font-weight: 600; letter-spacing: 0.34em; color: var(--text-3); margin-top: 3px; white-space: nowrap; }
 .nav-tabs { display: flex; gap: 4px; background: #e9edf3; border-radius: 12px; padding: 4px; }
 .nav-tab {
   border: none; background: none; padding: 7px 20px; border-radius: 9px;
@@ -619,5 +645,10 @@ watch(view, (v) => {
 }
 @media (max-width: 720px) {
   .page { padding: 16px 14px 12px; }
+  /* 窄屏：英文副标收掉、徽章和字号缩小，品牌区不挤 tab、不溢出 */
+  .topnav { gap: 10px; }
+  .brand-sub { display: none; }
+  .brand-badge { width: 30px; height: 30px; border-radius: 10px; font-size: 17px; }
+  .brand-name { font-size: 15px; }
 }
 </style>
