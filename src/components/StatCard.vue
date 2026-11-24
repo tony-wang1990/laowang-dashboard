@@ -31,7 +31,7 @@ const props = defineProps({
 const kind = computed(() => props.config.metric || 'cpu')
 
 const { data: sys, loading: sysLoading } = useApi('/api/system', 60000)
-// CPU 使用率与实时上下行来自运维区 10 秒采样（只读公开接口）
+// CPU 使用率与实时上下行来自服务器看板 10 秒采样（只读公开接口）
 const { data: ops, loading: opsLoading } = useApi('/api/ops/metrics?range=1h', 30000)
 const loading = computed(() => sysLoading.value || opsLoading.value)
 

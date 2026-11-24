@@ -10,32 +10,7 @@
       <span class="kpanel-open">打开 KPanel ↗</span>
     </a>
 
-    <!-- 未登录：登录框 -->
-    <div v-if="authChecked && !loggedIn" class="card login-card">
-      <div class="card-head">
-        <span class="card-dot" style="background: var(--rose)"></span>
-        <span class="card-title">运维区需要登录</span>
-      </div>
-      <p class="login-desc">
-        这里能启停容器、清理镜像、看日志，所以要口令才能进。
-        <span v-if="!adminEnabled">（当前未设置 ADMIN_PASSWORD，无法登录）</span>
-      </p>
-      <form class="login-form" @submit.prevent="doLogin" v-if="adminEnabled">
-        <input v-model="password" type="password" placeholder="输入运维口令" autocomplete="current-password" />
-        <button type="submit" :disabled="loginBusy">{{ loginBusy ? '验证中…' : '登录' }}</button>
-      </form>
-      <p class="login-error" v-if="loginError">{{ loginError }}</p>
-    </div>
-    <div v-else-if="!authChecked" class="loading">正在确认登录状态…</div>
-
-    <!-- 已登录：运维内容 -->
-    <template v-else>
-      <div class="ops-bar">
-        <span class="label">运维区 · 仅你本人可操作</span>
-        <button class="btn ghost" @click="doLogout">退出登录</button>
-      </div>
-
-      <!-- 主机信息 -->
+    <!-- 主机信息 -->
       <section class="card">
         <div class="card-head">
           <span class="card-dot" style="background: var(--emerald)"></span>
@@ -86,7 +61,7 @@
       <section class="card">
         <div class="card-head">
           <span class="card-dot" style="background: var(--violet)"></span>
-          <span class="card-title">Docker 容器管理</span>
+          <span class="card-title">Docker 容器</span>
           <span class="card-sub" v-if="docker">共 {{ docker.count }} 个</span>
         </div>
         <div v-if="dockerLoading" class="loading">加载中…</div>
@@ -103,18 +78,11 @@
                 <td>{{ c.memUsedMB }} / {{ c.memLimitMB }} MB</td>
                 <td class="mono">{{ c.ports || '—' }}</td>
                 <td class="ops-actions">
-                  <button class="mini" @click="containerAction(c, 'start')" :disabled="c.running || busy[c.id]">启动</button>
-                  <button class="mini" @click="containerAction(c, 'stop')" :disabled="!c.running || busy[c.id]">停止</button>
-                  <button class="mini" @click="containerAction(c, 'restart')" :disabled="busy[c.id]">重启</button>
                   <button class="mini" @click="showLogs(c)">日志</button>
                 </td>
               </tr>
             </tbody>
           </table>
-          <div class="prune-row">
-            <button class="btn" @click="pruneImages" :disabled="pruneBusy">{{ pruneBusy ? '清理中…' : '清理悬空镜像' }}</button>
-            <span class="label" v-if="pruneResult">{{ pruneResult }}</span>
-          </div>
         </div>
         <div class="images" v-if="images?.images?.length">
           <div class="label" style="margin: 14px 0 6px">镜像（只读）</div>
@@ -167,7 +135,6 @@
 
       <!-- 站点监测（复用） -->
       <UptimeCard />
-    </template>
 
     <!-- 日志弹窗 -->
     <div v-if="logModal" class="drawer-mask" @click.self="logModal = null">
@@ -191,13 +158,6 @@ import { fmtNum, fmtUptime } from '../useApi.js'
 
 Chart.register(LineController, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend, Filler)
 
-const authChecked = ref(false)
-const loggedIn = ref(false)
-const adminEnabled = ref(false)
-const password = ref('')
-const loginBusy = ref(false)
-const loginError = ref('')
-
 const range = ref('1h')
 const points = ref([])
 const metricsLoading = ref(false)
@@ -210,9 +170,6 @@ const processes = ref(null)
 const procLoading = ref(false)
 const disk = ref(null)
 const diskLoading = ref(false)
-const busy = ref({})
-const pruneBusy = ref(false)
-const pruneResult = ref('')
 const logModal = ref(null)
 const logText = ref('')
 const logLoading = ref(false)
@@ -227,46 +184,6 @@ const latest = computed(() => points.value[points.value.length - 1] || null)
 async function getJson(path) {
   const res = await fetch(path)
   return res.json()
-}
-
-async function checkAuth() {
-  try {
-    const j = await getJson('/api/ops/auth/status')
-    loggedIn.value = !!j?.data?.loggedIn
-    adminEnabled.value = !!j?.data?.adminEnabled
-  } catch { loggedIn.value = false }
-  authChecked.value = true
-  if (loggedIn.value) startPolling()
-}
-
-async function doLogin() {
-  loginBusy.value = true
-  loginError.value = ''
-  try {
-    const res = await fetch('/api/ops/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: password.value })
-    })
-    const j = await res.json()
-    if (j?.ok) {
-      loggedIn.value = true
-      password.value = ''
-      startPolling()
-    } else {
-      loginError.value = j?.error || '登录失败'
-    }
-  } catch {
-    loginError.value = '网络异常'
-  } finally {
-    loginBusy.value = false
-  }
-}
-
-async function doLogout() {
-  try { await fetch('/api/ops/auth/logout', { method: 'POST' }) } catch { /* 忽略 */ }
-  loggedIn.value = false
-  stopPolling()
 }
 
 async function loadMetrics() {
@@ -315,38 +232,6 @@ async function loadDisk() {
 function setRange(r) {
   range.value = r
   loadMetrics()
-}
-
-async function containerAction(c, action) {
-  const verb = { start: '启动', stop: '停止', restart: '重启' }[action]
-  if (action !== 'start' && !confirm(`确定要${verb}容器 ${c.name} 吗？`)) return
-  busy.value = { ...busy.value, [c.id]: true }
-  try {
-    const res = await fetch(`/api/ops/docker/${c.id}/${action}`, { method: 'POST' })
-    const j = await res.json()
-    if (!j?.ok) alert(`${verb}失败：${j?.error || '未知错误'}`)
-    else setTimeout(loadDocker, 1500)
-  } catch {
-    alert('网络异常')
-  } finally {
-    busy.value = { ...busy.value, [c.id]: false }
-  }
-}
-
-async function pruneImages() {
-  if (!confirm('确定要清理 Docker 悬空镜像吗？会删除所有无标签的镜像。')) return
-  pruneBusy.value = true
-  pruneResult.value = ''
-  try {
-    const res = await fetch('/api/ops/docker/prune', { method: 'POST' })
-    const j = await res.json()
-    pruneResult.value = j?.ok ? `已清理 ${j.data.deleted} 个悬空镜像` : `清理失败：${j?.error || '未知错误'}`
-    loadDocker()
-  } catch {
-    pruneResult.value = '网络异常'
-  } finally {
-    pruneBusy.value = false
-  }
 }
 
 async function showLogs(c) {
@@ -410,7 +295,11 @@ function drawCharts() {
   })
 }
 
-watch(points, drawCharts)
+// 注意：必须用 flush:'post'——loadMetrics 每轮都会先把 metricsLoading 置 true
+// （图表区短暂换成“加载中”，画布被销毁），再写 points；默认 flush:'pre' 的
+// watcher 会在画布重建前触发，chartCpu.value 还是 null，曲线永远画不出来
+// （旧版登录后也一样空白，只是没人注意）。post 让回调在 DOM 更新后跑。
+watch(points, drawCharts, { flush: 'post' })
 
 function startPolling() {
   stopPolling()
@@ -428,7 +317,7 @@ function stopPolling() {
   timers = []
 }
 
-onMounted(checkAuth)
+onMounted(startPolling)
 onUnmounted(() => {
   stopPolling()
   if (chartCpuObj) chartCpuObj.destroy()
@@ -461,20 +350,6 @@ onUnmounted(() => {
   .kpanel-banner { flex-wrap: wrap; }
   .kpanel-open { margin-left: 54px; }
 }
-.ops-bar { display: flex; justify-content: space-between; align-items: center; }
-.login-card { max-width: 480px; margin: 40px auto; width: 100%; }
-.login-desc { font-size: 13.5px; color: var(--text-2); line-height: 1.7; margin-bottom: 16px; }
-.login-form { display: flex; gap: 8px; }
-.login-form input {
-  flex: 1; height: 42px; border: 1px solid var(--border); border-radius: 10px;
-  padding: 0 14px; font-size: 14px; outline: none;
-}
-.login-form input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12); }
-.login-form button {
-  height: 42px; padding: 0 22px; border: none; border-radius: 10px;
-  background: var(--blue); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
-}
-.login-error { color: var(--rose); font-size: 13px; margin-top: 10px; }
 .host-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px 20px; }
 .host-val { font-size: 14px; font-weight: 600; margin-top: 3px; word-break: break-all; }
 .metric-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 16px; margin-bottom: 16px; }
@@ -500,7 +375,6 @@ onUnmounted(() => {
 .mini:hover:not(:disabled) { border-color: var(--blue); color: var(--blue); }
 .mini:disabled { opacity: 0.45; cursor: not-allowed; }
 .ops-actions { white-space: nowrap; }
-.prune-row { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
 .meter { margin-bottom: 12px; }
 .meter-head { display: flex; justify-content: space-between; margin-bottom: 6px; }
 .meter-val { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }

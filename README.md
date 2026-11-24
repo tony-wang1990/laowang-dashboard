@@ -42,32 +42,24 @@
 - 前端每 60 秒轮询刷新，行情 / 天气每 5 分钟。
 - 任何接口挂了都优雅降级：对应卡片显示“暂无数据”，绝不白屏、不报错刷屏。
 
-## 运维区（KPanel 风格，v1）
+## 服务器看板（KPanel 风格，v1）
 
-顶部导航点 **「运维」** 进入，和数据看板首页分开：首页是轻量展示，运维区是操作区。
+顶部导航点 **「服务器看板」** 进入，和数据看板首页分开：首页是轻量展示，服务器看板是本机监控——只看不改。
 
 | 功能 | 说明 |
 | --- | --- |
 | 主机信息 | 主机名、系统/内核、运行时间、公网 IP、CPU 型号核心数、内存总量 |
 | 实时监控 | CPU、内存、负载、上下行网速的实时数字 + 折线图；后端每 10 秒采样，保留 24 小时历史，前端可切 1h / 6h / 24h；数据放内存 + 每 5 分钟落盘 `data/metrics.json`，不引数据库 |
-| Docker 管理 | 容器列表（名字、镜像、状态、CPU/内存占用、端口、运行时间），支持启动 / 停止 / 重启单个容器，查看最近 200 行日志；镜像列表只读展示 |
+| Docker 容器 | 容器列表（名字、镜像、状态、CPU/内存占用、端口、运行时间），可查看最近 200 行日志；镜像列表只读展示 |
 | 进程 | 按 CPU 排序的 Top 进程（只读） |
 | 磁盘 | 各挂载点用量条 + 大目录占用 Top 10（`du` 采样，20 秒超时 + 10 分钟缓存，慢也不阻塞页面） |
 | 站点监测 | 复用看板卡片：转换站、导航站、转换器直连的在线/延迟 |
-| 快捷操作 | 一键重启单个容器、清理 Docker 悬空镜像（二次确认） |
 
-### 运维区登录
+### 只读，无需登录
 
-运维页面本身和所有写操作（启停容器、清理镜像、看日志）必须登录；只读查询（监控数字、容器列表）公开可看；数据看板首页完全不受影响。
+服务器看板是公开的纯看板：所有接口只读，启停容器、清理镜像等写操作已从服务端彻底移除（不只是藏按钮），也不需要任何口令。真正的服务器操作（终端、文件管理、Nginx、Docker 启停）请用 KPanel（看板里的 KPanel 横幅，自带登录）。
 
-口令用环境变量 `ADMIN_PASSWORD` 设置（不要写进仓库）：
-
-```bash
-# 部署时生成随机口令写进 VPS 上的 .env（chmod 600）
-ADMIN_PASSWORD=随机强口令
-```
-
-登录后发 httpOnly session cookie（24 小时有效）。不设置 `ADMIN_PASSWORD` 时运维区无法登录，写操作全部拒绝。
+布局保存在浏览器 localStorage；服务端 `data/layout.json` 只读（新浏览器首次打开时用它做 fallback，此后不再更新）。
 
 ### Roadmap（v1 之后再说）
 
@@ -159,17 +151,14 @@ docker run -d --name laowang-dashboard -p 38082:3000 \
 | `GET /api/ip` | 公网 IP 与归属地（ip-api.com） |
 | `GET /api/rss?url=…` | 任意 RSS 订阅源代理拉取 |
 | `GET /api/proxy?url=…` | 任意 http(s) 接口代理（自定义 API 卡片用，5 秒超时） |
-| `GET / POST /api/layout` | 看板布局的读取与保存（存 `data/layout.json`） |
-| `GET /api/ops/metrics?range=1h\|6h\|24h` | 运维监控历史曲线（后端 10 秒采样） |
-| `GET /api/ops/host` | 运维主机信息 |
+| `GET / POST /api/layout` | 看板布局：GET 只读（存 `data/layout.json` 的最后一次保存）；POST 已关闭，布局只保存在浏览器 localStorage |
+| `GET /api/ops/metrics?range=1h\|6h\|24h` | 服务器看板监控历史曲线（后端 10 秒采样） |
+| `GET /api/ops/host` | 服务器看板主机信息 |
 | `GET /api/ops/docker` | 容器列表 + CPU/内存占用 |
 | `GET /api/ops/images` | 镜像列表（只读） |
 | `GET /api/ops/processes` | Top 进程（只读） |
 | `GET /api/ops/disk` | 挂载点用量 + 大目录 Top 10 |
-| `GET /api/ops/docker/:id/logs` | 容器最近 200 行日志（需登录） |
-| `POST /api/ops/docker/:id/start\|stop\|restart` | 启停单个容器（需登录） |
-| `POST /api/ops/docker/prune` | 清理悬空镜像（需登录） |
-| `GET /api/ops/auth/status` · `POST /api/ops/auth/login\|logout` | 运维登录 |
+| `GET /api/ops/docker/:id/logs` | 容器最近 200 行日志（只读） |
 | `GET /api/quote` | 一言 |
 
 接口返回统一为 `{ ok: true, data, at }`，失败时 `{ ok: false, error }`。

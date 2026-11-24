@@ -12,7 +12,6 @@ import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import crypto from 'node:crypto'
 import dns from 'node:dns'
 import net from 'node:net'
 import { execFile } from 'node:child_process'
@@ -204,17 +203,6 @@ function parseRss(xml) {
   }).filter((i) => i.title)
 }
 
-function readJsonBody(req) {
-  return new Promise((resolve, reject) => {
-    let body = ''
-    req.on('data', (chunk) => { body += chunk; if (body.length > 512 * 1024) { req.destroy(); reject(new Error('body too large')) } })
-    req.on('end', () => {
-      try { resolve(body ? JSON.parse(body) : {}) } catch { reject(new Error('invalid json')) }
-    })
-    req.on('error', reject)
-  })
-}
-
 // ---------- /api/system ----------
 function systemInfo() {
   const cpus = os.cpus()
@@ -278,9 +266,9 @@ sampleHistory()
 setInterval(sampleHistory, 30_000)
 
 // ============================================================================
-// 运维板块（/api/ops/*）：10 秒采样监控 + Docker 管理 + 进程/磁盘
+// 服务器看板块（/api/ops/*）：10 秒采样监控 + Docker 列表 + 进程/磁盘
 // 监控数据放内存环形缓冲（24h，10s 一点）+ 每 5 分钟落盘 data/metrics.json，不引数据库。
-// 只读查询公开可看；所有写操作（启停容器、清理镜像、看日志）必须登录。
+// 全部接口只读、公开可看；启停容器、清理镜像等写操作已移除，登录也一并拿掉。
 // ============================================================================
 const METRICS_FILE = path.join(DATA_DIR, 'metrics.json')
 let opsMetrics = [] // { t, cpu, mem, load1, diskPct, up, down } up/down 单位 B/s
@@ -429,24 +417,6 @@ function demuxDockerLogs(buf) {
   }
   if (!out) out = buf.toString('utf-8') // 非 multiplexed（极少数情况）直接当文本
   return out
-}
-
-// ---------- 运维登录（ADMIN_PASSWORD 环境变量；登录后发 httpOnly session cookie） ----------
-const opsSessions = new Map() // token -> expiresAt
-function adminEnabled() { return !!process.env.ADMIN_PASSWORD }
-function opsAuthed(req) {
-  const m = (req.headers.cookie || '').match(/(?:^|;\s*)ops_session=([A-Fa-f0-9]+)/)
-  if (!m) return false
-  const exp = opsSessions.get(m[1])
-  if (!exp || exp < Date.now()) { opsSessions.get(m[1]) && opsSessions.delete(m[1]); return false }
-  return true
-}
-function sha256(s) { return crypto.createHash('sha256').update(s).digest() }
-function checkPassword(input) {
-  if (!adminEnabled()) return false
-  const a = sha256(String(input || ''))
-  const b = sha256(process.env.ADMIN_PASSWORD)
-  return a.length === b.length && crypto.timingSafeEqual(a, b)
 }
 
 // ---------- /api/docker ----------
@@ -690,13 +660,6 @@ function loadLayout() {
   } catch { /* 无文件或损坏 -> 返回 null，用默认布局 */ }
   return null
 }
-function saveLayout(layout) {
-  fs.mkdirSync(DATA_DIR, { recursive: true })
-  const tmp = layoutPath() + '.tmp'
-  fs.writeFileSync(tmp, JSON.stringify({ layout, savedAt: new Date().toISOString() }, null, 2))
-  fs.renameSync(tmp, layoutPath())
-}
-
 // ---------- 路由 ----------
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -783,22 +746,18 @@ const routes = {
     const d = await fetchJson('https://v1.hitokoto.cn/?c=d&c=i&c=k', { timeoutMs: 8000 })
     return ok({ text: d.hitokoto, from: d.from_who || d.from || '' })
   }),
+  // 布局只读：GET 返回服务端最后一次保存的布局（新浏览器用它做 fallback）；
+  // POST 已关闭（见主路由里的 404），布局只保存在各浏览器 localStorage。
   '/api/layout': async (req) => {
     if (req.method === 'GET') {
       const layout = loadLayout()
       return layout ? ok({ layout }) : fail('no saved layout')
     }
-    if (req.method === 'POST') {
-      const body = await readJsonBody(req)
-      if (!Array.isArray(body.layout)) return fail('layout 必须是数组')
-      saveLayout(body.layout)
-      return ok({ saved: body.layout.length })
-    }
     return fail('method not allowed')
   }
 }
 
-// ---------- 运维接口 /api/ops/* ----------
+// ---------- 服务器看板接口 /api/ops/*（全部只读） ----------
 // 只读查询（监控、主机、容器列表、镜像、进程、磁盘）公开可看；
 // 写操作（启停容器、清理镜像、看日志）必须登录。
 async function opsDockerList() {
@@ -1021,30 +980,6 @@ async function handleOps(req, res, url) {
   const p = url.pathname
   const send = (obj, status = 200) => sendJson(res, obj, status)
   try {
-    // --- 登录 ---
-    if (p === '/api/ops/auth/status') {
-      return send(ok({ loggedIn: opsAuthed(req), adminEnabled: adminEnabled() }))
-    }
-    if (p === '/api/ops/auth/login' && req.method === 'POST') {
-      const body = await readJsonBody(req)
-      if (!checkPassword(body.password)) return send(fail(adminEnabled() ? '口令不正确' : '未设置 ADMIN_PASSWORD'))
-      const token = crypto.randomBytes(32).toString('hex')
-      opsSessions.set(token, Date.now() + 24 * 3600 * 1000)
-      res.writeHead(200, {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Cache-Control': 'no-store',
-        'Set-Cookie': `ops_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400`
-      })
-      return res.end(JSON.stringify(ok({ loggedIn: true })))
-    }
-    if (p === '/api/ops/auth/logout' && req.method === 'POST') {
-      res.writeHead(200, {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Set-Cookie': 'ops_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'
-      })
-      return res.end(JSON.stringify(ok({ loggedIn: false })))
-    }
-
     // --- 只读查询（公开） ---
     if (p === '/api/ops/metrics') {
       const range = url.searchParams.get('range') || '1h'
@@ -1064,43 +999,15 @@ async function handleOps(req, res, url) {
     if (p === '/api/ops/processes') return send(await cached('ops-processes', 10_000, opsProcesses))
     if (p === '/api/ops/disk') return send(await opsDisk())
 
-    // --- 写操作与日志：必须登录 ---
-    const needAuth = async () => {
-      if (!opsAuthed(req)) { send(fail('请先登录运维区'), 401); return false }
-      return true
-    }
+    // --- 日志查看（只读，公开） ---
+    // 启停容器、清理镜像的写接口已移除：再调就落到下面的 unknown ops api（404）。
     const logMatch = p.match(/^\/api\/ops\/docker\/([0-9a-f]{12})\/logs$/)
     if (logMatch && req.method === 'GET') {
-      if (!(await needAuth())) return
       if (!dockerAvailable()) return send(fail('宿主机 Docker 不可用'))
       const tail = Math.min(Number(url.searchParams.get('tail') || 200), 500)
       const r = await dockerApi('GET', `/containers/${logMatch[1]}/logs?stdout=1&stderr=1&tail=${tail}`)
       if (r.status !== 200) return send(fail('日志获取失败'))
       return send(ok({ logs: demuxDockerLogs(r.body).slice(-20000) }))
-    }
-    const actionMatch = p.match(/^\/api\/ops\/docker\/([0-9a-f]{12})\/(start|stop|restart)$/)
-    if (actionMatch && req.method === 'POST') {
-      if (!(await needAuth())) return
-      if (!dockerAvailable()) return send(fail('宿主机 Docker 不可用'))
-      const [, id, action] = actionMatch
-      const query = action === 'stop' || action === 'restart' ? '?t=10' : ''
-      const r = await dockerApi('POST', `/containers/${id}/${action}${query}`)
-      if (r.status === 204 || r.status === 304) {
-        cache.delete('ops-docker')
-        return send(ok({ action, id }))
-      }
-      return send(fail(`容器${action}失败（HTTP ${r.status}）`))
-    }
-    if (p === '/api/ops/docker/prune' && req.method === 'POST') {
-      if (!(await needAuth())) return
-      if (!dockerAvailable()) return send(fail('宿主机 Docker 不可用'))
-      const r = await dockerApi('POST', '/images/prune')
-      if (r.status !== 200) return send(fail('清理失败'))
-      let pruned = []
-      try { pruned = JSON.parse(r.body.toString('utf-8')).ImagesDeleted || [] } catch { /* 忽略 */ }
-      cache.delete('ops-images')
-      cache.delete('ops-docker')
-      return send(ok({ deleted: pruned.length }))
     }
 
     return send(fail('unknown ops api'), 404)
@@ -1119,9 +1026,10 @@ const server = http.createServer(async (req, res) => {
       return res.end('ok')
     }
     if (p.startsWith('/api/ops/')) return handleOps(req, res, url)
-    // POST /api/layout 会覆盖全站共享布局，必须登录运维区；GET 保持公开
-    if (p === '/api/layout' && req.method === 'POST' && !opsAuthed(req)) {
-      return sendJson(res, fail('保存布局需要先登录运维区'), 401)
+    // 布局只保存在浏览器 localStorage，不再向服务端保存：
+    // POST /api/layout 已关闭（公开写接口会被任何人用来覆盖全站布局）；GET 保持公开只读。
+    if (p === '/api/layout' && req.method === 'POST') {
+      return sendJson(res, fail('服务端布局保存已关闭，布局只保存在浏览器本地'), 404)
     }
     if (routes[p]) {
       try {

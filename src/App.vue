@@ -4,7 +4,7 @@
       <div class="brand"><span class="brand-dot"></span>老王数据看板</div>
       <div class="nav-tabs">
         <button class="nav-tab" :class="{ active: view === 'dashboard' }" @click="view = 'dashboard'">数据看板</button>
-        <button class="nav-tab" :class="{ active: view === 'ops' }" @click="view = 'ops'">运维</button>
+        <button class="nav-tab" :class="{ active: view === 'ops' }" @click="view = 'ops'">服务器看板</button>
       </div>
     </nav>
 
@@ -16,8 +16,7 @@
       <div class="toolbar-left">
         <span class="toolbar-title">我的看板</span>
         <span class="label" v-if="savedAt">已保存 {{ savedAt }}</span>
-        <span class="label warn" v-if="layoutNeedLogin">服务端布局保存需要先登录运维区</span>
-        <span class="label" v-else>拖动卡片可自由拼看板</span>
+        <span class="label">拖动卡片可自由拼看板</span>
       </div>
       <div class="toolbar-right">
         <button v-if="editMode" class="btn" @click="showAdd = !showAdd">＋ 添加卡片</button>
@@ -80,8 +79,8 @@
     <template v-else>
       <OpsView />
       <footer class="foot">
-        <span>老王数据看板 · 运维区</span>
-        <span>监控每 10 秒采样 · 容器操作与日志需要登录 · 全功能运维（终端、文件、Nginx）在 KPanel · 多主机集群见 Roadmap</span>
+        <span>老王数据看板 · 服务器看板</span>
+        <span>监控每 10 秒采样 · 本页只读查看 · 全功能运维（终端、文件、Nginx）在 KPanel · 多主机集群见 Roadmap</span>
         <a href="https://github.com/tony-wang1990/laowang-dashboard" target="_blank" rel="noopener">GitHub 开源</a>
       </footer>
     </template>
@@ -153,7 +152,6 @@ const editMode = ref(false)
 const showAdd = ref(false)
 const editing = ref(null)
 const savedAt = ref('')
-const layoutNeedLogin = ref(false) // 服务端保存布局被 401 拒绝时提示登录运维区
 
 // ---------- 窄屏堆叠 ----------
 // 视口 < 640px 时 12 列网格会把 w=4 的卡压到约 120px 宽，值被省略成一两个字。
@@ -273,15 +271,9 @@ function persist() {
   clearTimeout(saveTimer)
   saveTimer = setTimeout(async () => {
     try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout.value)) } catch { /* 忽略 */ }
-    try {
-      const r = await fetch('/api/layout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ layout: layout.value })
-      })
-      // 未登录时服务端返回 401：提示去登录运维区，本机 localStorage 布局不受影响
-      layoutNeedLogin.value = r.status === 401
-    } catch { /* 服务端保存失败不影响本机 */ }
+    // 布局只保存在浏览器 localStorage，不再向服务端 POST：
+    // 服务端写接口已关闭（公开写接口会被任何人用来覆盖全站布局）。
+    // 新浏览器首次打开时仍会从 GET /api/layout 读服务端最后一次保存的布局。
     const now = new Date()
     savedAt.value = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
   }, 500)
@@ -453,7 +445,7 @@ onMounted(() => {
   loadLayout()
   nextTick(setupAutoResize)
   window.addEventListener('resize', onWinResize)
-  // 支持 #ops 深链直达运维区
+  // 支持 #ops 深链直达服务器看板
   if (window.location.hash === '#ops') view.value = 'ops'
   window.addEventListener('hashchange', () => {
     view.value = window.location.hash === '#ops' ? 'ops' : 'dashboard'
@@ -487,7 +479,6 @@ watch(view, (v) => {
 }
 .nav-tab.active { background: #fff; color: var(--text); box-shadow: var(--shadow); }
 .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 20px 0 4px; flex-wrap: wrap; }
-.toolbar .warn { color: var(--rose); }
 .toolbar-left { display: flex; align-items: baseline; gap: 12px; }
 .toolbar-title { font-size: 17px; font-weight: 700; }
 .toolbar-right { display: flex; gap: 8px; flex-wrap: wrap; }
