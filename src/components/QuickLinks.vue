@@ -19,7 +19,7 @@ defineProps({ config: { type: Object, default: () => ({}) }, title: { type: Stri
 const links = [
   { name: 'KPanel 运维', desc: 'kp.199060.xyz', url: 'https://kp.199060.xyz/', icon: 'K', bg: '#eff6ff' },
   { name: '订阅转换', desc: 'sub.199060.xyz', url: 'https://sub.199060.xyz/', icon: '转', bg: '#eff6ff' },
-  { name: '老王导航', desc: '67.215.229.127:8080', url: 'http://67.215.229.127:8080/', icon: '导', bg: '#ecfdf5' },
+  { name: '老王导航', desc: 'www.199060.xyz', url: 'https://www.199060.xyz/', icon: '导', bg: '#ecfdf5' },
   { name: 'GitHub', desc: 'tony-wang1990', url: 'https://github.com/tony-wang1990', icon: 'G', bg: '#f1f5f9' },
   { name: 'NPM 管理', desc: '67.215.229.127:81', url: 'http://67.215.229.127:81/', icon: 'N', bg: '#f5f3ff' },
   { name: 'Hacker News', desc: 'news.ycombinator.com', url: 'https://news.ycombinator.com/', icon: 'H', bg: '#fff7ed' },
