@@ -9,7 +9,7 @@
     <div v-else-if="!data || error || !data.items?.length" class="empty">暂无数据</div>
     <div v-else>
       <div class="row" v-for="r in data.items" :key="r.name">
-        <span class="grow">
+        <span class="grow" :title="r.name + (r.description ? ' — ' + r.description : '')">
           <a :href="r.url" target="_blank" rel="noopener">{{ r.name }}</a>
           <span class="label" v-if="r.description"> — {{ r.description }}</span>
         </span>

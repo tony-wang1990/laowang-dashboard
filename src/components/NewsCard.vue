@@ -13,7 +13,7 @@
     <div v-else-if="items.length === 0" class="empty">暂无数据</div>
     <div v-else>
       <div class="row" v-for="n in items" :key="n.url + n.title">
-        <span class="grow"><a :href="n.url" target="_blank" rel="noopener">{{ n.title }}</a></span>
+        <span class="grow" :title="n.title"><a :href="n.url" target="_blank" rel="noopener">{{ n.title }}</a></span>
         <span class="label" v-if="n.points != null">▲ {{ n.points }}</span>
       </div>
     </div>

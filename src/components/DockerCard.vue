@@ -11,7 +11,7 @@
     <div v-else>
       <div class="row" v-for="c in data.containers" :key="c.name">
         <span class="status-dot" :class="c.running ? 'on' : 'off'"></span>
-        <span class="grow"><strong>{{ c.name }}</strong><span class="label"> · {{ shortImage(c.image) }}</span></span>
+        <span class="grow" :title="c.name + ' · ' + c.image"><strong>{{ c.name }}</strong><span class="label"> · {{ shortImage(c.image) }}</span></span>
         <span class="label">{{ c.status }}</span>
       </div>
     </div>

@@ -12,7 +12,7 @@
         <span class="big-num">$1 <small>=</small> ¥{{ fmtMoney(data.rates.CNY) }}</span>
       </div>
       <div class="row" v-for="c in others" :key="c.code">
-        <span class="grow">{{ c.name }}</span>
+        <span class="grow" :title="c.name">{{ c.name }}</span>
         <span style="font-weight: 650; font-variant-numeric: tabular-nums">{{ c.symbol }}{{ fmtMoney(c.value, c.code === 'JPY' ? 1 : 4) }}</span>
       </div>
     </div>

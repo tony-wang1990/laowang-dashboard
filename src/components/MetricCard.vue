@@ -1,13 +1,13 @@
 <template>
-  <section class="card"><div class="card-head"><span class="card-dot" style="background: var(--emerald)"></span><span class="card-title">{{ title || '数字指标' }}</span></div>
+  <section class="card metric-card"><div class="card-head"><span class="card-dot" style="background: var(--emerald)"></span><span class="card-title">{{ title || '数字指标' }}</span></div>
   <div class="metrics">
     <div v-if="loading" class="loading">加载中…</div>
     <div v-else-if="!data || error" class="empty">暂无数据</div>
     <div v-else class="metric-grid">
       <div class="metric" v-for="m in shown" :key="m.key">
         <div class="label">{{ m.label }}</div>
-        <div class="big-num">{{ m.value }}<small v-if="m.unit">{{ m.unit }}</small></div>
-        <div class="label" v-if="m.sub">{{ m.sub }}</div>
+        <div class="big-num" :title="String(m.value) + (m.unit || '')">{{ m.value }}<small v-if="m.unit">{{ m.unit }}</small></div>
+        <div class="label sub" v-if="m.sub" :title="m.sub">{{ m.sub }}</div>
       </div>
     </div>
   </div>
@@ -44,7 +44,23 @@ const shown = computed(() => {
 </script>
 
 <style scoped>
-.metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 18px; }
-.metric .big-num { margin-top: 4px; font-size: 26px; word-break: break-all; }
+/* 卡片自身作为容器查询容器：窄了自动 4 列变 2x2 */
+.metric-card { container-type: inline-size; }
+.metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+.metric { min-width: 0; }
+.metric .big-num {
+  margin-top: 4px;
+  font-size: 22px;
+  /* 按卡片宽度自适应：放不下就缩小字号，绝不把一个值劈成两截 */
+  font-size: clamp(15px, 2.6cqw, 22px);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.metric .big-num small { font-size: 0.62em; margin-left: 2px; }
 .metric .label:last-child { margin-top: 2px; }
+.metric .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@container (max-width: 620px) {
+  .metric-grid { grid-template-columns: repeat(2, 1fr); }
+  .metric .big-num { font-size: clamp(15px, 5cqw, 26px); }
+}
 </style>

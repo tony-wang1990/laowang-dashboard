@@ -9,7 +9,7 @@
     <div v-else-if="!data || error" class="empty">暂无数据</div>
     <div v-else>
       <div class="row" v-for="c in data.coins" :key="c.id">
-        <span class="grow"><strong>{{ c.name }}</strong></span>
+        <span class="grow" :title="c.name"><strong>{{ c.name }}</strong></span>
         <span class="price">${{ fmtMoney(c.usd) }}</span>
         <span :class="['chg', c.chg24 >= 0 ? 'up' : 'down']">
           {{ c.chg24 == null ? '—' : (c.chg24 >= 0 ? '+' : '') + c.chg24.toFixed(2) + '%' }}

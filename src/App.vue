@@ -16,6 +16,7 @@
       <div class="toolbar-left">
         <span class="toolbar-title">我的看板</span>
         <span class="label" v-if="savedAt">已保存 {{ savedAt }}</span>
+        <span class="label warn" v-if="layoutNeedLogin">服务端布局保存需要先登录运维区</span>
         <span class="label" v-else>拖动卡片可自由拼看板</span>
       </div>
       <div class="toolbar-right">
@@ -150,6 +151,7 @@ const editMode = ref(false)
 const showAdd = ref(false)
 const editing = ref(null)
 const savedAt = ref('')
+const layoutNeedLogin = ref(false) // 服务端保存布局被 401 拒绝时提示登录运维区
 
 function clone(v) { return JSON.parse(JSON.stringify(v)) }
 
@@ -182,11 +184,13 @@ function persist() {
   saveTimer = setTimeout(async () => {
     try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout.value)) } catch { /* 忽略 */ }
     try {
-      await fetch('/api/layout', {
+      const r = await fetch('/api/layout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ layout: layout.value })
       })
+      // 未登录时服务端返回 401：提示去登录运维区，本机 localStorage 布局不受影响
+      layoutNeedLogin.value = r.status === 401
     } catch { /* 服务端保存失败不影响本机 */ }
     const now = new Date()
     savedAt.value = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
@@ -263,6 +267,7 @@ watch(view, (v) => {
 }
 .nav-tab.active { background: #fff; color: var(--text); box-shadow: var(--shadow); }
 .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 20px 0 4px; flex-wrap: wrap; }
+.toolbar .warn { color: var(--rose); }
 .toolbar-left { display: flex; align-items: baseline; gap: 12px; }
 .toolbar-title { font-size: 17px; font-weight: 700; }
 .toolbar-right { display: flex; gap: 8px; flex-wrap: wrap; }

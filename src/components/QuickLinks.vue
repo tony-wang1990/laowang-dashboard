@@ -5,10 +5,10 @@
       <span class="card-title">{{ title || '快捷入口' }}</span>
     </div>
     <div class="links">
-      <a v-for="l in links" :key="l.url" :href="l.url" target="_blank" rel="noopener" class="link">
+      <a v-for="l in links" :key="l.url" :href="l.url" target="_blank" rel="noopener" class="link" :title="l.name + ' · ' + l.desc">
         <span class="link-icon" :style="{ background: l.bg }">{{ l.icon }}</span>
-        <span class="link-name">{{ l.name }}</span>
-        <span class="link-desc">{{ l.desc }}</span>
+        <span class="link-text"><span class="link-name">{{ l.name }}</span>
+        <span class="link-desc">{{ l.desc }}</span></span>
       </a>
     </div>
   </section>
@@ -39,6 +39,7 @@ const links = [
   display: flex; align-items: center; justify-content: center;
   font-size: 15px; font-weight: 700; color: var(--text-2);
 }
-.link-name { font-size: 13.5px; font-weight: 650; display: block; }
-.link-desc { font-size: 11.5px; color: var(--text-3); display: block; margin-top: 1px; }
+.link-name { font-size: 13.5px; font-weight: 650; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-desc { font-size: 11.5px; color: var(--text-3); display: block; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-text { flex: 1; min-width: 0; }
 </style>

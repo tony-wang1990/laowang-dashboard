@@ -5,7 +5,7 @@
     <div v-else-if="!data || error || !data.items?.length" class="empty">暂无数据（检查订阅地址是否正确）</div>
     <div v-else>
       <div class="row" v-for="n in data.items" :key="n.url + n.title">
-        <span class="grow"><a :href="n.url" target="_blank" rel="noopener">{{ n.title }}</a></span>
+        <span class="grow" :title="n.title"><a :href="n.url" target="_blank" rel="noopener">{{ n.title }}</a></span>
         <span class="label" v-if="n.date">{{ shortDate(n.date) }}</span>
       </div>
     </div>

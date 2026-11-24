@@ -10,7 +10,7 @@
     <div v-else>
       <div class="row" v-for="t in data.targets" :key="t.url">
         <span class="status-dot" :class="t.up ? 'on' : 'off'"></span>
-        <span class="grow">{{ t.name }}</span>
+        <span class="grow" :title="t.name">{{ t.name }}</span>
         <span class="tag" :style="t.up ? '' : 'background:#fff1f2;color:var(--rose)'">
           {{ t.up ? `在线 · ${t.ms} ms` : '离线' }}
         </span>

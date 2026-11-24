@@ -109,7 +109,7 @@
         <div class="images" v-if="images?.images?.length">
           <div class="label" style="margin: 14px 0 6px">镜像（只读）</div>
           <div class="row" v-for="im in images.images" :key="im.id">
-            <span class="grow mono">{{ im.tags[0] || '(悬空)' }} <span class="label">{{ im.id }}</span></span>
+            <span class="grow mono" :title="im.tags[0] || '(悬空)'">{{ im.tags[0] || '(悬空)' }} <span class="label">{{ im.id }}</span></span>
             <span class="label">{{ im.sizeMB }} MB · {{ im.created }}</span>
           </div>
         </div>
@@ -149,7 +149,7 @@
           </div>
           <div class="label" style="margin: 16px 0 6px">大目录 Top 10 <span v-if="disk.scanning">（统计中…）</span></div>
           <div class="row" v-for="t in disk.topDirs" :key="t.path">
-            <span class="grow mono">{{ t.path }}</span>
+            <span class="grow mono" :title="t.path">{{ t.path }}</span>
             <span style="font-weight: 650">{{ t.sizeMB >= 1024 ? (t.sizeMB / 1024).toFixed(2) + ' GB' : t.sizeMB + ' MB' }}</span>
           </div>
         </div>

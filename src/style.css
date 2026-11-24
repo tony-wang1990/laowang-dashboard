@@ -52,7 +52,7 @@ a:hover { text-decoration: underline; }
   width: 9px; height: 9px; border-radius: 50%;
   flex: none;
 }
-.card-title { font-size: 15px; font-weight: 650; letter-spacing: 0.02em; }
+.card-title { font-size: 16px; font-weight: 700; letter-spacing: 0.02em; }
 .card-sub { font-size: 12px; color: var(--text-3); margin-left: auto; font-weight: 400; }
 .card-refresh { font-size: 11px; color: var(--text-3); cursor: pointer; border: none; background: none; padding: 2px 4px; }
 .card-refresh:hover { color: var(--blue); }
@@ -66,7 +66,8 @@ a:hover { text-decoration: underline; }
 .loading { color: var(--text-3); font-size: 13px; padding: 18px 0; text-align: center; }
 
 /* ---------- 数字 / 指标 ---------- */
-.big-num { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+/* 关键值一律不许从中间断行：nowrap + 等宽数字 */
+.big-num { font-size: 32px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .big-num small { font-size: 14px; font-weight: 500; color: var(--text-3); margin-left: 2px; }
 .label { font-size: 12px; color: var(--text-3); }
 .up { color: var(--emerald); }

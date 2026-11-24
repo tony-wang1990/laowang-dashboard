@@ -13,6 +13,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import crypto from 'node:crypto'
+import dns from 'node:dns'
+import net from 'node:net'
 import { execFile } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
@@ -51,6 +53,129 @@ async function fetchText(url, { timeoutMs = 8000, headers = {} } = {}) {
     const res = await fetch(url, { signal: ctrl.signal, headers })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return await res.text()
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// ---------- SSRF 防护：用户可控 URL（/api/proxy、/api/rss）必须走 safeFetchText ----------
+// 只拦内网/回环/保留地址 + 服务器自身出口 IP；公开接口不受影响。
+// 注意：容器内 127.0.0.1 就是容器自身，所以只拦字面 127 段不够，必须 DNS 解析后按 IP 段拦截。
+const MAX_BODY_BYTES = 1024 * 1024 // 响应体上限 1MB
+const MAX_REDIRECTS = 3
+let egressIp = process.env.PUBLIC_IP || null // 服务器出口 IP（动态学习，见 learnEgressIp）
+let egressIpPromise = null
+function learnEgressIp() {
+  if (egressIp) return Promise.resolve(egressIp)
+  if (!egressIpPromise) {
+    // 与 /api/system 共用 'public-ip' 缓存；学不到也不阻塞请求
+    egressIpPromise = cached('public-ip', 600_000, publicIp)
+      .then((r) => { if (r?.ip) egressIp = r.ip; return egressIp })
+      .catch(() => null)
+  }
+  return egressIpPromise
+}
+
+function ipIsBlocked(ip) {
+  const v = net.isIP(ip)
+  if (v === 4) {
+    const [a, b, c] = ip.split('.').map(Number)
+    if (a === 0) return true // 0.0.0.0/8
+    if (a === 10) return true // 10/8
+    if (a === 100 && b >= 64 && b <= 127) return true // 100.64/10 CGNAT
+    if (a === 127) return true // 127/8 回环
+    if (a === 169 && b === 254) return true // 169.254/16 链路本地
+    if (a === 172 && b >= 16 && b <= 31) return true // 172.16/12（含 docker 172.17/16、172.18/16）
+    if (a === 192 && b === 0 && (c === 0 || c === 2)) return true // 192.0.0/24、192.0.2/24
+    if (a === 192 && b === 168) return true // 192.168/16
+    if (a === 198 && b === 51 && c === 100) return true // 198.51.100/24
+    if (a === 203 && b === 0 && c === 113) return true // 203.0.113/24
+    if (a >= 224) return true // 224/4 组播 + 240/4 保留
+    return false
+  }
+  if (v === 6) {
+    const low = ip.toLowerCase()
+    const mapped = low.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/) // IPv4 映射地址按 v4 判断
+    if (mapped) return ipIsBlocked(mapped[1])
+    if (low === '::1' || low === '::') return true
+    if (/^fe[89ab][0-9a-f]:/.test(low)) return true // fe80::/10 链路本地
+    if (/^f[c-d][0-9a-f]/.test(low)) return true // fc00::/7 唯一本地
+    if (low.startsWith('ff')) return true // ff00::/8 组播
+    if (low.startsWith('2001:db8')) return true // 文档地址
+    return false
+  }
+  return true // 不是合法 IP，保守拒绝
+}
+
+function ipIsSelf(ip) {
+  if (egressIp && ip === egressIp) return true // 服务器出口公网 IP
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const a of addrs || []) if (a.address === ip) return true // 本机网卡地址
+  }
+  return false
+}
+
+// 校验一个 URL 是否允许对外请求：协议、凭据、DNS 解析出的每个 IP 都要过关
+async function assertPublicUrl(rawUrl) {
+  let u
+  try { u = new URL(rawUrl) } catch { throw new Error('URL 无效') }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error('只支持 http/https 地址')
+  if (u.username || u.password) throw new Error('URL 不能带认证信息')
+  // 出口 IP 学习最多等 800ms，学不到也不阻塞（私有段拦截仍在）
+  await Promise.race([learnEgressIp(), new Promise((r) => setTimeout(r, 800))])
+  const host = u.hostname
+  if (net.isIP(host)) {
+    if (ipIsBlocked(host) || ipIsSelf(host)) throw new Error('目标地址不允许访问（内网/本机地址）')
+    return u
+  }
+  let addrs
+  try {
+    addrs = await dns.promises.lookup(host, { all: true })
+  } catch {
+    throw new Error('域名解析失败')
+  }
+  if (!addrs.length) throw new Error('域名解析失败')
+  for (const a of addrs) {
+    if (ipIsBlocked(a.address) || ipIsSelf(a.address)) {
+      throw new Error('目标地址解析到内网/本机 IP，已拒绝')
+    }
+  }
+  return u
+}
+
+// 带 SSRF 校验的安全 fetch：redirect 手动跟进（每跳重新校验，最多 3 次），响应体上限 1MB
+async function safeFetchText(rawUrl, { timeoutMs = 8000, headers = {} } = {}) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    let current = await assertPublicUrl(rawUrl)
+    let res = null
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      res = await fetch(current, { signal: ctrl.signal, headers, redirect: 'manual' })
+      const loc = res.headers.get('location')
+      if (res.status >= 300 && res.status < 400 && loc) {
+        if (hop === MAX_REDIRECTS) throw new Error('重定向次数过多')
+        try { await res.body?.cancel() } catch { /* 忽略 */ }
+        current = await assertPublicUrl(new URL(loc, current).toString())
+        continue
+      }
+      break
+    }
+    if (!res) throw new Error('请求失败')
+    const contentType = res.headers.get('content-type') || ''
+    const chunks = []
+    let size = 0
+    if (res.body) {
+      for await (const chunk of res.body) {
+        size += chunk.length
+        if (size > MAX_BODY_BYTES) {
+          try { await res.body.cancel() } catch { /* 忽略 */ }
+          throw new Error('响应体超过 1MB 上限')
+        }
+        chunks.push(chunk)
+      }
+    }
+    return { status: res.status, contentType, text: Buffer.concat(chunks).toString('utf-8') }
   } finally {
     clearTimeout(timer)
   }
@@ -137,6 +262,9 @@ async function publicIp() {
     return { ip: d.query, country: d.country, city: d.city, isp: d.isp }
   } catch { return null }
 }
+
+// 启动时后台学习出口 IP（供 SSRF 拦截用），学不到也不影响启动
+learnEgressIp()
 
 // ---------- 历史采样（图表卡片用）：每 30 秒采一次系统指标，保留最近 120 个点 ----------
 // 数据来源：本机实时采样，不是模拟数据。服务刚启动时点数较少，随时间积累。
@@ -571,28 +699,21 @@ const routes = {
   '/api/rss': async (req, url) => {
     const feedUrl = url.searchParams.get('url') || ''
     if (!/^https?:\/\//i.test(feedUrl)) return fail('只支持 http/https 的 RSS 地址')
-    const xml = await fetchText(feedUrl, { timeoutMs: 8000 })
-    return ok({ url: feedUrl, items: parseRss(xml).slice(0, 20) })
+    const { text } = await safeFetchText(feedUrl, { timeoutMs: 8000 })
+    return ok({ url: feedUrl, items: parseRss(text).slice(0, 20) })
   },
   '/api/proxy': async (req, url) => {
     const target = url.searchParams.get('url') || ''
     if (!/^https?:\/\//i.test(target)) return fail('只支持 http/https 地址')
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), 5000)
-    try {
-      const res = await fetch(target, { signal: ctrl.signal, headers: { 'User-Agent': 'laowang-dashboard' } })
-      const text = await res.text()
-      let json = null
-      try { json = JSON.parse(text) } catch { /* 非 JSON，返回原始文本 */ }
-      return ok({
-        status: res.status,
-        contentType: res.headers.get('content-type') || '',
-        json,
-        text: json ? undefined : text.slice(0, 500)
-      })
-    } finally {
-      clearTimeout(timer)
-    }
+    const { status, contentType, text } = await safeFetchText(target, { timeoutMs: 5000, headers: { 'User-Agent': 'laowang-dashboard' } })
+    let json = null
+    try { json = JSON.parse(text) } catch { /* 非 JSON，返回原始文本 */ }
+    return ok({
+      status,
+      contentType,
+      json,
+      text: json ? undefined : text.slice(0, 500)
+    })
   },
   '/api/quote': () => cached('quote', 300_000, async () => {
     const d = await fetchJson('https://v1.hitokoto.cn/?c=d&c=i&c=k', { timeoutMs: 8000 })
@@ -934,6 +1055,10 @@ const server = http.createServer(async (req, res) => {
       return res.end('ok')
     }
     if (p.startsWith('/api/ops/')) return handleOps(req, res, url)
+    // POST /api/layout 会覆盖全站共享布局，必须登录运维区；GET 保持公开
+    if (p === '/api/layout' && req.method === 'POST' && !opsAuthed(req)) {
+      return sendJson(res, fail('保存布局需要先登录运维区'), 401)
+    }
     if (routes[p]) {
       try {
         const result = await routes[p](req, url)

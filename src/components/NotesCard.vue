@@ -12,7 +12,7 @@
     <div v-if="notes.length === 0" class="empty">还没有便签，写一条试试</div>
     <div v-else>
       <div class="row" v-for="n in notes" :key="n.id">
-        <span class="grow" :class="{ done: n.done }" @click="toggle(n)">{{ n.text }}</span>
+        <span class="grow" :class="{ done: n.done }" :title="n.text" @click="toggle(n)">{{ n.text }}</span>
         <span class="label">{{ n.date }}</span>
         <button class="del" @click="remove(n.id)" title="删除">×</button>
       </div>

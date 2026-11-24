@@ -46,7 +46,7 @@ const { data, loading, error } = useApi('/api/system', 60000)
 .metric .big-num { margin-top: 4px; }
 .meter { margin-bottom: 12px; }
 .meter-head { display: flex; justify-content: space-between; margin-bottom: 6px; }
-.meter-val { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.meter-val { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .foot { display: flex; justify-content: space-between; gap: 12px; margin-top: 14px; padding-top: 12px; border-top: 1px solid #f1f4f8; }
 .foot .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
