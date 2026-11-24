@@ -5,10 +5,12 @@
     <div v-else-if="!data || error || !data.points || data.points.length < 2" class="empty">
       数据采集中…（本机每 30 秒采样一次，稍等片刻即有曲线）
     </div>
-    <div v-else class="chart-box">
-      <canvas ref="canvas"></canvas>
+    <template v-else>
+      <div class="chart-box" ref="box">
+        <canvas ref="canvas"></canvas>
+      </div>
       <div class="label chart-src">数据来源：{{ data.source }}</div>
-    </div>
+    </template>
   </div>
   </section>
 </template>
@@ -23,7 +25,9 @@ Chart.register(LineController, LineElement, PointElement, LinearScale, TimeScale
 const props = defineProps({ config: { type: Object, default: () => ({}) }, title: { type: String, default: '' } })
 const { data, loading, error } = useApi('/api/history', 30000)
 const canvas = ref(null)
+const box = ref(null)
 let chart = null
+let boxObserver = null
 
 function render() {
   if (!canvas.value || !data.value?.points?.length) return
@@ -59,19 +63,34 @@ function render() {
       }
     }
   })
+  // 兜底：盒子尺寸变化时强制重算（Chart.js 自带的监听在首屏时序里可能漏掉一次）
+  if (box.value && !boxObserver) {
+    boxObserver = new ResizeObserver(() => { if (chart) chart.resize() })
+    boxObserver.observe(box.value)
+  }
 }
 
-watch(data, render)
-watch(() => props.config.metric, render)
+// flush:'post' 很关键：默认 'pre' 会在数据到来的同一 tick、Vue 还没把
+// canvas 渲染进 DOM 时就触发 render()，canvas.value 是 null 直接 return，
+// 图表要等 30 秒后下一次刷新才出现。'post' 等 DOM 更新完再画，首屏就有图。
+watch(data, render, { flush: 'post' })
+watch(() => props.config.metric, render, { flush: 'post' })
 onMounted(render)
-onUnmounted(() => { if (chart) chart.destroy() })
+onUnmounted(() => { boxObserver?.disconnect(); if (chart) chart.destroy() })
 </script>
 
 <style scoped>
-/* 图表区随卡片高度伸缩：卡片变高时曲线跟着长大，不留大片空白 */
+/* 图表区高度必须有确定值：以前画布在文档流里（canvas height:100%!important），
+   Chart.js 按父容器给画布定高，父容器高度又由画布内容撑起来——互相顶，
+   窄屏下每 30 秒数据一刷新就把画布撑到 13538px，页面无限变长。
+   现在画布改成绝对定位（脱离文档流，撑不起父容器），chart-box 的高度只由
+   flex-basis（240px）和卡片高度决定，Chart.js 只按容器算尺寸，循环就断了。
+   上限 420px 是兜底：即使将来再有异常测量，画布也不会顶爆页面。 */
 .chart-card { display: flex; flex-direction: column; }
 .chart-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.chart-box { flex: 1; min-height: 170px; position: relative; }
-.chart-box canvas { width: 100% !important; height: 100% !important; }
+.chart-box { flex: 1 1 240px; min-height: 200px; max-height: 420px; position: relative; overflow: hidden; }
+.chart-box canvas { position: absolute; inset: 0; display: block; }
 .chart-src { margin-top: 6px; }
+/* 没数据时把提示文字在图表区里垂直居中，别顶在上方留一大片空 */
+.chart-wrap > .loading, .chart-wrap > .empty { flex: 1; display: flex; align-items: center; justify-content: center; }
 </style>

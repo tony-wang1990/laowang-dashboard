@@ -1,5 +1,5 @@
 <template>
-  <section class="card">
+  <section class="card card-fill">
     <div class="card-head">
       <span class="card-dot" style="background: var(--cyan)"></span>
       <span class="card-title">{{ title || '上海天气' }}</span>
@@ -7,7 +7,7 @@
     </div>
     <div v-if="loading" class="loading">加载中…</div>
     <div v-else-if="!data || error" class="empty">暂无数据</div>
-    <div v-else>
+    <div v-else class="fill-body">
       <div class="now">
         <div class="temp">{{ Math.round(data.temp) }}<small>°C</small></div>
         <div class="cond">
@@ -34,7 +34,8 @@ const { data, loading, error } = useApi('/api/weather', 5 * 60 * 1000)
 
 <style scoped>
 .now { display: flex; align-items: center; gap: 18px; margin-bottom: 14px; }
-.temp { font-size: 44px; font-weight: 700; letter-spacing: -0.02em; line-height: 1; font-variant-numeric: tabular-nums; }
+.temp { font-size: 54px; font-weight: 800; letter-spacing: -0.02em; line-height: 1; font-variant-numeric: tabular-nums;
+  background: linear-gradient(120deg, #2563eb, #06b6d4); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .temp small { font-size: 20px; font-weight: 500; color: var(--text-3); }
 .cond-text { font-size: 17px; font-weight: 650; margin-bottom: 4px; }
 .hours { display: flex; gap: 4px; overflow-x: auto; padding-top: 12px; border-top: 1px solid #f1f4f8; }

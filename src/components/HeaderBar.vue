@@ -1,5 +1,9 @@
 <template>
-  <header class="hero card">
+  <!-- 顶部大字区：不再是卡片（以前 .card 的 22px 内边距让搜索按钮右缘
+       比下面的「编辑布局」缩进 22px，看着没对齐），改成透明通栏，
+       搜索按钮右缘和页面内容右缘（= 编辑布局按钮右缘）完全对齐；
+       时钟改成蓝紫渐变大字 + 底部一条渐变细线，带科技感但仍是浅色。 -->
+  <header class="hero">
     <div class="hero-left">
       <div class="greet">{{ greeting }}，yatao</div>
       <div class="clock">{{ time }}</div>
@@ -16,6 +20,7 @@
       <div class="hero-quote empty-quote" v-else-if="!quoteLoading">今日一言暂无数据</div>
     </div>
   </header>
+  <div class="hero-rule" aria-hidden="true"></div>
 </template>
 
 <script setup>
@@ -63,26 +68,32 @@ function doSearch() {
 </script>
 
 <style scoped>
+/* 透明通栏：无卡片底色 / 边框 / 阴影，左右两端贴合页面内容边缘 */
 .hero {
   display: flex;
   gap: 32px;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  background: linear-gradient(120deg, #ffffff 0%, #f8fbff 55%, #f5f7ff 100%);
+  padding: 6px 2px 0;
 }
 .hero-left { min-width: 260px; }
 .greet { font-size: 15px; color: var(--text-2); font-weight: 550; }
 .clock {
-  font-size: 56px;
-  font-weight: 700;
+  font-size: 64px;
+  font-weight: 800;
   letter-spacing: -0.02em;
-  line-height: 1.15;
+  line-height: 1.1;
   font-variant-numeric: tabular-nums;
-  color: var(--text);
+  /* 渐变大字：科技感 */
+  background: linear-gradient(92deg, #2563eb 10%, #06b6d4 50%, #7c3aed 90%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
-.date { font-size: 13px; color: var(--text-3); margin-top: 2px; }
-.hero-right { flex: 1; min-width: 280px; max-width: 560px; }
+.date { font-size: 13px; color: var(--text-3); margin-top: 4px; }
+/* 右侧贴到页面最右：搜索按钮右缘 = 编辑布局按钮右缘 */
+.hero-right { flex: 1; min-width: 280px; max-width: 560px; margin-left: auto; }
 .search { display: flex; gap: 8px; }
 .search input {
   flex: 1;
@@ -112,4 +123,12 @@ function doSearch() {
 .hero-quote { margin-top: 14px; font-size: 13.5px; color: var(--text-2); line-height: 1.6; }
 .hero-quote span { color: var(--text-3); font-size: 12px; }
 .empty-quote { color: var(--text-3); }
+/* 顶部通栏下方一条蓝紫渐变细线，分隔大字区和工具栏 */
+.hero-rule {
+  height: 3px;
+  border-radius: 99px;
+  margin: 18px 0 2px;
+  background: linear-gradient(90deg, #2563eb 0%, #06b6d4 45%, #7c3aed 100%);
+  opacity: 0.85;
+}
 </style>

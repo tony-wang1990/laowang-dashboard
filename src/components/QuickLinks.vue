@@ -44,4 +44,8 @@ const links = [
 .link-name { font-size: 13.5px; font-weight: 650; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link-desc { font-size: 11.5px; color: var(--text-3); display: block; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link-text { flex: 1; min-width: 0; }
+/* 窄屏（≤640px）tile 改单列全宽：390px 下两列会把名字截成 "KPanel …"、"Hacker …"，URL 也只剩一半；宁可卡片长一点，也要名字和地址完整可读。卡片高度由 App.vue 的自动撑高兜底。 */
+@media (max-width: 640px) {
+  .links { grid-template-columns: 1fr; }
+}
 </style>

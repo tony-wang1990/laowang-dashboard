@@ -12,7 +12,7 @@
   --amber: #d97706;
   --emerald: #059669;
   --rose: #e11d48;
-  --radius: 18px;
+  --radius: 20px;
   --shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 8px 24px rgba(15, 23, 42, 0.05);
   --shadow-hover: 0 2px 4px rgba(15, 23, 42, 0.06), 0 16px 32px rgba(15, 23, 42, 0.08);
 }
@@ -21,7 +21,8 @@
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  background: var(--bg);
+  /* 顶部淡淡的蓝紫渐变，浅色底但不再是一片死白 */
+  background: linear-gradient(180deg, #eef4ff 0%, #f3f5f9 240px, #f3f5f9 100%);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   min-height: 100vh;
@@ -64,6 +65,14 @@ a:hover { text-decoration: underline; }
   text-align: center;
 }
 .loading { color: var(--text-3); font-size: 13px; padding: 18px 0; text-align: center; }
+
+/* ---------- 撑满卡片高度的卡 ---------- */
+/* 同一行卡片等高时用：根节点纵向 flex，内容区 flex:1 把行居中分布，
+   底部说明贴底——行不会挤在顶部、底部不会留空。 */
+.card-fill { display: flex; flex-direction: column; }
+.card-fill .fill-body { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 12px; }
+.card-fill .fill-foot { margin-top: auto; }
+.card-fill > .loading, .card-fill > .empty { flex: 1; display: flex; align-items: center; justify-content: center; }
 
 /* ---------- 数字 / 指标 ---------- */
 /* 关键值一律不许从中间断行：nowrap + 等宽数字 */

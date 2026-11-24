@@ -1,5 +1,5 @@
 <template>
-  <section class="card stat-card">
+  <section :class="bare ? 'stat-block' : 'card stat-card'">
     <div class="stat-head">
       <span class="stat-icon" :style="{ background: meta.bg, color: meta.fg }">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" v-html="meta.icon"></svg>
@@ -11,7 +11,7 @@
     <template v-else>
       <div class="stat-value" :title="valueTitle">{{ value }}<small v-if="unit">{{ unit }}</small></div>
       <div class="stat-bottom">
-        <div class="stat-bar" v-if="pct != null"><i :style="{ width: pct + '%' }"></i></div>
+        <div class="stat-bar" v-if="pct != null"><i :style="{ width: pct + '%', background: meta.bar }"></i></div>
         <div class="stat-sub" :title="sub">{{ sub }}</div>
       </div>
     </template>
@@ -22,7 +22,12 @@
 import { computed } from 'vue'
 import { useApi, fmtUptime } from '../useApi.js'
 
-const props = defineProps({ config: { type: Object, default: () => ({}) }, title: { type: String, default: '' } })
+const props = defineProps({
+  config: { type: Object, default: () => ({}) },
+  title: { type: String, default: '' },
+  // bare：去掉卡片外壳，只留指标本体，供 StatStrip（通栏指标条）复用
+  bare: { type: Boolean, default: false }
+})
 const kind = computed(() => props.config.metric || 'cpu')
 
 const { data: sys, loading: sysLoading } = useApi('/api/system', 60000)
@@ -38,11 +43,11 @@ const ICONS = {
   net: '<circle cx="5" cy="12" r="2.5"/><circle cx="19" cy="6" r="2.5"/><circle cx="19" cy="18" r="2.5"/><path d="M7.2 10.8l9.6-3.6M7.2 13.2l9.6 3.6"/>'
 }
 const META = {
-  cpu: { label: 'CPU', bg: '#eff6ff', fg: '#1e40af', icon: ICONS.cpu },
-  mem: { label: '内存', bg: '#ecfdf5', fg: '#047857', icon: ICONS.mem },
-  disk: { label: '系统盘', bg: '#eff6ff', fg: '#1d4ed8', icon: ICONS.disk },
-  load: { label: '1 分钟负载', bg: '#fff7ed', fg: '#c2410c', icon: ICONS.load },
-  net: { label: '实时网络', bg: '#f5f3ff', fg: '#6d28d9', icon: ICONS.net }
+  cpu: { label: 'CPU', bg: '#eff6ff', fg: '#1e40af', icon: ICONS.cpu, bar: 'linear-gradient(90deg,#2563eb,#06b6d4)' },
+  mem: { label: '内存', bg: '#ecfdf5', fg: '#047857', icon: ICONS.mem, bar: 'linear-gradient(90deg,#059669,#34d399)' },
+  disk: { label: '系统盘', bg: '#eff6ff', fg: '#1d4ed8', icon: ICONS.disk, bar: 'linear-gradient(90deg,#7c3aed,#a78bfa)' },
+  load: { label: '1 分钟负载', bg: '#fff7ed', fg: '#c2410c', icon: ICONS.load, bar: 'linear-gradient(90deg,#ea580c,#f59e0b)' },
+  net: { label: '实时网络', bg: '#f5f3ff', fg: '#6d28d9', icon: ICONS.net, bar: 'linear-gradient(90deg,#2563eb,#7c3aed)' }
 }
 const meta = computed(() => META[kind.value] || META.cpu)
 
@@ -103,12 +108,15 @@ const valueTitle = computed(() => stat.value?.valueTitle ?? '')
 
 <style scoped>
 /* KPanel 式单指标卡：图标 + 小标签 → 大号数字 → 细进度条 → 底部小字 */
-.stat-card {
+.stat-card, .stat-block {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   gap: 10px;
 }
+/* 指标条里的大数字模式：无卡片外壳，数字更大 */
+.stat-block { padding: 2px 4px; min-width: 0; }
+.stat-block .stat-value { font-size: 34px; }
 .stat-head { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .stat-icon {
   width: 30px; height: 30px; border-radius: 9px; flex: none;

@@ -1,5 +1,5 @@
 <template>
-  <section class="card">
+  <section class="card card-fill">
     <div class="card-head">
       <span class="card-dot" style="background: var(--amber)"></span>
       <span class="card-title">{{ title || '备忘小记' }}</span>
@@ -56,11 +56,14 @@ function remove(id) { notes.value = notes.value.filter((n) => n.id !== id) }
 <style scoped>
 .add { display: flex; gap: 8px; margin-bottom: 6px; }
 .add input {
-  flex: 1; height: 38px; border: 1px solid var(--border); border-radius: 10px;
+  /* min-width:0 很关键：input 默认最小宽度约 203px，窄卡里不加它会把整个
+     表单顶出卡片、页面出现横向滚动条 */
+  flex: 1; min-width: 0; height: 38px; border: 1px solid var(--border); border-radius: 10px;
   padding: 0 12px; font-size: 13.5px; outline: none; background: #fff; color: var(--text);
 }
 .add input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12); }
 .add button {
+  flex: none;
   height: 38px; padding: 0 16px; border: none; border-radius: 10px;
   background: var(--blue); color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
 }

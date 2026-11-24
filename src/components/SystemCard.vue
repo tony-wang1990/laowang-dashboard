@@ -56,4 +56,8 @@ const fields = computed(() => {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
+/* 窄屏下定义列表改单列：每行值占整卡宽，不再两列挤着省略 */
+@media (max-width: 640px) {
+  .dl { grid-template-columns: 1fr; }
+}
 </style>

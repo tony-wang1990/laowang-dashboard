@@ -1,5 +1,5 @@
 <template>
-  <section class="card">
+  <section class="card card-fill">
     <div class="card-head">
       <span class="card-dot" style="background: var(--violet)"></span>
       <span class="card-title">{{ title || 'Docker 容器' }}</span>
@@ -8,7 +8,7 @@
     <div v-if="loading" class="loading">加载中…</div>
     <div v-else-if="!data || error" class="empty">暂无数据（Docker 未运行或不可用）</div>
     <div v-else-if="data.containers.length === 0" class="empty">当前没有运行中的容器</div>
-    <div v-else>
+    <div v-else class="fill-body">
       <div class="row" v-for="c in data.containers" :key="c.name">
         <span class="status-dot" :class="c.running ? 'on' : 'off'"></span>
         <span class="grow" :title="c.name + ' · ' + c.image"><strong>{{ c.name }}</strong><span class="label"> · {{ shortImage(c.image) }}</span></span>

@@ -1,5 +1,5 @@
 <template>
-  <section class="card"><div class="card-head"><span class="card-dot" style="background: var(--cyan)"></span><span class="card-title">{{ title || '文本 / 链接卡片' }}</span></div>
+  <section class="card card-fill"><div class="card-head"><span class="card-dot" style="background: var(--cyan)"></span><span class="card-title">{{ title || '文本 / 链接卡片' }}</span></div>
   <div class="text-card">
     <p v-if="config.text" class="text-body">{{ config.text }}</p>
     <div class="text-links" v-if="links.length">
@@ -26,6 +26,9 @@ const links = computed(() => {
 </script>
 
 <style scoped>
+/* 内容在卡里垂直居中：同行快捷入口是 h=3，这张卡内容只有 h=2 的量，
+   居中后上下留白均匀，不会顶在上方留一大片空 */
+.text-card { flex: 1; display: flex; flex-direction: column; justify-content: center; }
 .text-body { font-size: 14px; line-height: 1.7; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .text-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .text-link {
