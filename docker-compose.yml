@@ -17,6 +17,12 @@ services:
       # 运维区登录口令：从项目目录 .env 文件读取（部署时生成随机口令写进去，chmod 600）。
       # 不设置时运维区的写操作全部拒绝登录。
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      # KPanel 集群凭据（服务器看板切换主机用）：同样从 .env 读取；
+      # KPANEL_URL 必须是 VPS 公网 IP（如 http://67.215.229.127:38083），容器内 127.0.0.1 是自己。
+      # 三个缺一不可，缺了就只列本机，本机功能不受影响。
+      - KPANEL_URL=${KPANEL_URL:-}
+      - KPANEL_USER=${KPANEL_USER:-}
+      - KPANEL_PASS=${KPANEL_PASS:-}
     ports:
       - "38082:3000"
     volumes:

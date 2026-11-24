@@ -57,6 +57,20 @@
 
 顶部导航点 **「服务器看板」** 进入，和数据看板首页分开：首页是轻量展示，服务器看板是本机监控——只看不改。
 
+### 切换主机（多机查看）
+
+服务器看板顶部有「查看主机」切换器（照天气卡换城市的样式：按钮 + 选择器），列出本机和 KPanel 集群里的轻节点（带在线状态）；选择存在浏览器 localStorage（`laowang-dashboard-ops-host`），下次打开还选这台。切换后主机信息、实时监控、Docker、进程、磁盘全部重新拉该主机的数据。
+
+| 栏目 | 本机 | 集群轻节点 | 备注 |
+| --- | --- | --- | --- |
+| 主机信息 | ✅ 实时本机数据 | ✅ KPanel 快照（主机名、系统/内核、CPU、内存、磁盘、公网 IP） | 离线节点显示最后快照 |
+| 实时监控 | ✅ 后端 10 秒采样，1h/6h/24h | ✅ KPanel 集群历史（约每 1 分钟一个点），轮询 30 秒 | 曲线形状与本机一致 |
+| Docker 容器 / 进程 / 日志 | ✅ | ❌ 不支持远程查看 | KPanel 轻节点 API 未提供远程 Docker/进程接口；页面明确提示并提供「回本机」 |
+| 磁盘 | ✅ 各挂载点 + 大目录 Top 10 | ⚠️ 只有根盘用量 | 大目录统计仅本机可用 |
+| 站点监测 | ✅（与主机无关，始终是本机视角） | ✅ 同左 | — |
+
+配置：在部署环境的 `.env` 里加 `KPANEL_URL`（面板地址，容器内必须用 VPS 公网 IP，如 `http://67.215.229.127:38083`，不能用 `127.0.0.1`）、`KPANEL_USER`、`KPANEL_PASS`。三个变量缺一不可，缺了就只列本机，本机功能一切照常；KPanel 挂了也不影响本机。`docker-compose.yml` 已把这三个变量透传进容器；**改了 `.env` 后要 `docker compose up -d` 重建容器才生效，光 `docker restart` 不够**（restart 不重新读环境变量）。登录拿 Session + CSRF，401 时自动重登一次；失败时接口返回明确错误，不崩。敏感信息不进前端：KPanel 快照里的登录记录等字段在服务端已过滤。
+
 | 功能 | 说明 |
 | --- | --- |
 | 主机信息 | 主机名、系统/内核、运行时间、公网 IP、CPU 型号核心数、内存总量 |
@@ -166,13 +180,14 @@ docker run -d --name laowang-dashboard -p 38082:3000 \
 | `GET /api/rss?url=…` | 任意 RSS 订阅源代理拉取 |
 | `GET /api/proxy?url=…` | 任意 http(s) 接口代理（自定义 API 卡片用，5 秒超时） |
 | `GET / POST /api/layout` | 看板布局：GET 只读（存 `data/layout.json` 的最后一次保存）；POST 已关闭，布局只保存在浏览器 localStorage |
-| `GET /api/ops/metrics?range=1h\|6h\|24h` | 服务器看板监控历史曲线（后端 10 秒采样） |
-| `GET /api/ops/host` | 服务器看板主机信息 |
-| `GET /api/ops/docker` | 容器列表 + CPU/内存占用 |
-| `GET /api/ops/images` | 镜像列表（只读） |
-| `GET /api/ops/processes` | Top 进程（只读） |
-| `GET /api/ops/disk` | 挂载点用量 + 大目录 Top 10 |
-| `GET /api/ops/docker/:id/logs` | 容器最近 200 行日志（只读） |
+| `GET /api/ops/hosts` | 主机列表（本机 + KPanel 集群主机，含在线状态；`kpanelConfigured` 指示是否配了 KPanel 凭据） |
+| `GET /api/ops/metrics?range=1h\|6h\|24h&host=<id>` | 服务器看板监控历史曲线（本机：后端 10 秒采样；远程：KPanel 集群历史） |
+| `GET /api/ops/host?host=<id>` | 服务器看板主机信息（`host` 省略或 `local` = 本机） |
+| `GET /api/ops/docker?host=<id>` | 容器列表 + CPU/内存占用（远程主机不支持，返回明确错误） |
+| `GET /api/ops/images?host=<id>` | 镜像列表（只读；远程主机不支持） |
+| `GET /api/ops/processes?host=<id>` | Top 进程（只读；远程主机不支持） |
+| `GET /api/ops/disk?host=<id>` | 挂载点用量 + 大目录 Top 10（远程主机只有根盘用量） |
+| `GET /api/ops/docker/:id/logs?host=<id>` | 容器最近 200 行日志（只读；远程主机不支持） |
 | `GET /api/quote` | 一言 |
 
 接口返回统一为 `{ ok: true, data, at }`，失败时 `{ ok: false, error }`。

@@ -204,13 +204,26 @@ function parseRss(xml) {
 }
 
 // ---------- /api/system ----------
+// 容器里 os.hostname() 是容器 ID（如 262ec8bfcee3），不是宿主机名；
+// docker-compose 把宿主机 / 只读挂在 /host，优先读宿主机的 /etc/hostname，
+// 读不到（本地开发）再回落到 os.hostname()。只在启动时读一次。
+let _hostName = null
+function hostName() {
+  if (_hostName) return _hostName
+  try {
+    const h = fs.readFileSync('/host/etc/hostname', 'utf8').trim()
+    if (h) { _hostName = h; return h }
+  } catch { /* 没有 /host 挂载时忽略 */ }
+  _hostName = os.hostname()
+  return _hostName
+}
 function systemInfo() {
   const cpus = os.cpus()
   const load = os.loadavg()
   const totalMem = os.totalmem()
   const freeMem = os.freemem()
   return {
-    hostname: os.hostname(),
+    hostname: hostName(),
     platform: os.platform(),
     arch: os.arch(),
     cpuModel: cpus[0]?.model?.trim() || 'unknown',
@@ -1155,11 +1168,253 @@ function getTopDirs() {
   return { data: topDirsCache.data, scanning: topDirsCache.scanning }
 }
 
+// ============================================================================
+// KPanel 集群（服务器看板主机切换）——只读
+// 凭据全部来自环境变量 KPANEL_URL / KPANEL_USER / KPANEL_PASS，代码里不写
+// 任何默认值和真值；没配凭据时切换器只提供本机，本机功能一切照常。
+// 注意：不用 safeFetchText——KPANEL_URL 是运维人员在服务端配的可信地址，
+// 不是用户输入；且它就是本机公网 IP，safeFetchText 会把它当“自身地址”拦掉。
+// 直连 fetch + 8 秒超时；401 时自动重登一次。
+// 实测依据（2026-11-24，KPanel 1.30.0 前端 JS + 真实接口探测）：
+//   POST /api/v1/auth/login {username, password} -> 200，下发 Session cookie，
+//     body 含 csrfToken；请求须带 Origin: <KPANEL_URL>，之后带 X-CSRF-Token + Cookie。
+//   GET /api/v1/cluster/hosts -> 200，{items, total, remoteTotal}（无 data 包裹），
+//     每台含 lastSnapshot.telemetry（hostname/os/kernel/load/cpu/memory/disk/
+//     network/publicNetwork），state 字段为 online/offline。
+//   GET /api/v1/monitoring/cluster-history?range=1h|6h|24h&hostId=<id> -> 200，
+//     {range, bucketSeconds, host: [{collectedAt, cpuPercent, loadOne, cpuCores,
+//     memoryUsedBytes, memoryTotalBytes, diskPercent, networkRxBytesPerSecond,
+//     networkTxBytesPerSecond, ...}]}，1h 桶 60 秒，24h 桶 120 秒。
+//   Docker/进程/磁盘/日志没有远程接口（实测）：/docker/containers 与
+//     /system/summary 加 hostId 会静默返回本机数据，/system/processes 加
+//     hostId 报 400 invalid_query，/system/disk-partitions 加 hostId 报 404
+//     route_not_found；面板前端（DockerView/ProcessManagerView）也完全没有
+//     hostId 逻辑。所以远程主机只提供主机信息、监控曲线、根盘用量三栏，
+//     其余栏目明确返回“不支持远程查看”，绝不拿本机数据冒充远程数据。
+// ============================================================================
+const KPANEL_URL = (process.env.KPANEL_URL || '').replace(/\/+$/, '')
+const KPANEL_USER = process.env.KPANEL_USER || ''
+const KPANEL_PASS = process.env.KPANEL_PASS || ''
+const kpanelConfigured = Boolean(KPANEL_URL && KPANEL_USER && KPANEL_PASS)
+let kpanelAuth = null // { cookies, csrf }
+let kpanelLoginPromise = null
+
+async function kpanelLogin() {
+  if (kpanelLoginPromise) return kpanelLoginPromise
+  kpanelLoginPromise = (async () => {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 8000)
+    let res
+    try {
+      res = await fetch(KPANEL_URL + '/api/v1/auth/login', {
+        method: 'POST',
+        signal: ctrl.signal,
+        headers: { Accept: 'application/json', Origin: KPANEL_URL, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: KPANEL_USER, password: KPANEL_PASS })
+      })
+    } catch { throw new Error('KPanel 登录连接失败') } finally { clearTimeout(timer) }
+    let data = null
+    try { data = await res.json() } catch { /* 非 JSON */ }
+    if (!res.ok) {
+      const code = data?.error?.code || data?.code
+      if (code === 'totp_required') throw new Error('KPanel 账号开启了两步验证，密码登录需要验证码')
+      throw new Error('KPanel 登录失败：' + (data?.error?.message || data?.message || `HTTP ${res.status}`))
+    }
+    const cookies = (typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [])
+      .map((c) => c.split(';')[0]).join('; ')
+    const csrf = res.headers.get('x-csrf-token') || data?.csrfToken || data?.data?.csrfToken || ''
+    if (!cookies) throw new Error('KPanel 登录未下发会话')
+    kpanelAuth = { cookies, csrf }
+  })()
+  try { await kpanelLoginPromise } finally { kpanelLoginPromise = null }
+}
+
+async function kpanelFetch(apiPath, { method = 'GET', body, _retried = false } = {}) {
+  if (!kpanelConfigured) throw new Error('未配置 KPanel 凭据')
+  if (!kpanelAuth) await kpanelLogin()
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 8000)
+  let res
+  try {
+    res = await fetch(KPANEL_URL + '/api/v1' + apiPath, {
+      method,
+      signal: ctrl.signal,
+      headers: {
+        Accept: 'application/json',
+        Origin: KPANEL_URL,
+        Cookie: kpanelAuth.cookies,
+        ...(kpanelAuth.csrf ? { 'X-CSRF-Token': kpanelAuth.csrf } : {}),
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {})
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined
+    })
+  } catch { throw new Error('KPanel 连接失败') } finally { clearTimeout(timer) }
+  let data = null
+  try { data = await res.json() } catch { /* 非 JSON */ }
+  if (res.status === 401 && !_retried) {
+    kpanelAuth = null
+    await kpanelLogin()
+    return kpanelFetch(apiPath, { method, body, _retried: true })
+  }
+  if (!res.ok) {
+    const msg = data?.error?.message || data?.message || data?.detail || data?.title || `KPanel 接口返回 HTTP ${res.status}`
+    throw new Error(String(msg).slice(0, 200))
+  }
+  // KPanel 有的接口包 data，有的直接返回对象本体，两者都兼容
+  return (data && typeof data === 'object' && 'data' in data) ? data.data : data
+}
+
+// 只留前端展示需要的字段：sshLogin 这类登录记录绝不往外传
+function pickTelemetry(tel) {
+  const t = tel || {}
+  return {
+    hostname: t.hostname || '', os: t.os || '', osId: t.osId || '', kernel: t.kernel || '',
+    architecture: t.architecture || '', uptimeSeconds: t.uptimeSeconds ?? null,
+    collectedAt: t.collectedAt || null,
+    load: { one: t.load?.one ?? null, five: t.load?.five ?? null, fifteen: t.load?.fifteen ?? null },
+    cpu: { model: t.cpu?.model || '', cores: t.cpu?.cores || 0, usagePercent: t.cpu?.usagePercent ?? null },
+    memory: {
+      totalBytes: t.memory?.totalBytes || 0, usedBytes: t.memory?.usedBytes || 0,
+      usagePercent: t.memory?.usagePercent ?? null,
+      swapTotalBytes: t.memory?.swapTotalBytes || 0, swapUsedBytes: t.memory?.swapUsedBytes || 0
+    },
+    disk: { totalBytes: t.disk?.totalBytes || 0, usedBytes: t.disk?.usedBytes || 0, usagePercent: t.disk?.usagePercent ?? null },
+    network: {
+      receivedBytes: t.network?.receivedBytes || 0, sentBytes: t.network?.sentBytes || 0,
+      tcpConnections: t.network?.tcpConnections ?? null, udpConnections: t.network?.udpConnections ?? null
+    },
+    publicNetwork: {
+      ipv4: t.publicNetwork?.ipv4 || '', isp: t.publicNetwork?.isp || '',
+      country: t.publicNetwork?.country || '', region: t.publicNetwork?.region || '',
+      city: t.publicNetwork?.city || '', timezone: t.publicNetwork?.timezone || ''
+    }
+  }
+}
+
+async function kpanelHosts() {
+  const items = await cached('kpanel-hosts', 30_000, async () => {
+    const d = await kpanelFetch('/cluster/hosts')
+    return Array.isArray(d?.items) ? d.items : []
+  })
+  return items.map((it) => ({
+    id: it.id, name: it.name || it.id, kind: it.kind || '',
+    isLocal: !!it.isLocal, online: it.state === 'online', state: it.state || '',
+    hostname: it.lastSnapshot?.telemetry?.hostname || it.name || it.id,
+    lastSeenAt: it.lastSuccessAt || it.lastSnapshot?.receivedAt || null,
+    telemetry: pickTelemetry(it.lastSnapshot?.telemetry)
+  }))
+}
+
+async function kpanelRemoteHost(id) {
+  const hosts = await kpanelHosts()
+  return hosts.find((h) => h.id === id) || null
+}
+
+// 远程主机信息：拼成本机 /api/ops/host 同样的返回结构，前端不用改字段
+function remoteHostInfo(h) {
+  const t = h.telemetry
+  const memTotalMB = Math.round((t.memory.totalBytes || 0) / 1024 / 1024)
+  const memUsedMB = Math.round((t.memory.usedBytes || 0) / 1024 / 1024)
+  return {
+    hostname: t.hostname || h.name,
+    platform: 'linux',
+    arch: t.architecture || '',
+    cpuModel: t.cpu.model || '',
+    cpuCount: t.cpu.cores || 0,
+    load1: t.load.one, load5: t.load.five, load15: t.load.fifteen,
+    load: [t.load.one ?? 0, t.load.five ?? 0, t.load.fifteen ?? 0].map((v) => +Number(v).toFixed(2)),
+    memTotalMB, memUsedMB,
+    memUsedPct: t.memory.usagePercent,
+    uptimeSec: t.uptimeSeconds,
+    osType: t.os || '',
+    kernel: t.kernel || '',
+    disk: {
+      totalGB: +(t.disk.totalBytes / 1e9).toFixed(1),
+      usedGB: +(t.disk.usedBytes / 1e9).toFixed(1),
+      usedPct: t.disk.usagePercent ?? 0
+    },
+    ip: { ip: t.publicNetwork.ipv4 || '', country: t.publicNetwork.country || '', city: t.publicNetwork.city || '', isp: t.publicNetwork.isp || '' },
+    collectedAt: t.collectedAt || null,
+    remote: true
+  }
+}
+
+// 远程监控曲线：拼成本机 /api/ops/metrics 同样的点结构
+async function kpanelRemoteMetrics(id, range) {
+  const d = await cached(`kpanel-history:${id}:${range}`, 30_000, () =>
+    kpanelFetch(`/monitoring/cluster-history?range=${encodeURIComponent(range)}&hostId=${encodeURIComponent(id)}`))
+  const raw = Array.isArray(d?.host) ? d.host : []
+  let points = raw.map((p) => ({
+    t: Date.parse(p.collectedAt) || 0,
+    cpu: p.cpuPercent ?? null,
+    mem: (p.memoryTotalBytes && p.memoryUsedBytes != null) ? +((p.memoryUsedBytes / p.memoryTotalBytes) * 100).toFixed(1) : null,
+    load1: p.loadOne ?? null,
+    diskPct: p.diskPercent ?? null,
+    up: Math.round(p.networkTxBytesPerSecond || 0),
+    down: Math.round(p.networkRxBytesPerSecond || 0)
+  })).filter((p) => p.t > 0)
+  if (points.length > 300) {
+    const step = Math.ceil(points.length / 300)
+    points = points.filter((_, i) => i % step === 0)
+  }
+  return { range, points, latest: points[points.length - 1] || null, count: points.length }
+}
+
 async function handleOps(req, res, url) {
   const p = url.pathname
   const send = (obj, status = 200) => sendJson(res, obj, status)
+  const hostId = (url.searchParams.get('host') || 'local').trim() || 'local'
+  const isRemote = hostId !== 'local'
   try {
-    // --- 只读查询（公开） ---
+    // --- 主机列表（本机 + KPanel 集群主机） ---
+    if (p === '/api/ops/hosts') {
+      const list = [{
+        id: 'local', name: hostName(), kind: 'panel', isLocal: true,
+        online: true, state: 'online', hostname: hostName()
+      }]
+      let kpanelError = null
+      if (kpanelConfigured) {
+        try {
+          for (const h of await kpanelHosts()) {
+            if (!h.isLocal) {
+              list.push({ id: h.id, name: h.name, kind: h.kind, isLocal: false, online: h.online, state: h.state, hostname: h.hostname })
+            }
+          }
+        } catch (e) { kpanelError = e.message || String(e) }
+      }
+      return send(ok({ hosts: list, localId: 'local', kpanelConfigured, kpanelError }))
+    }
+
+    // --- 远程主机：只接 KPanel 有的接口，其余明确报“不支持” ---
+    if (isRemote) {
+      if (!kpanelConfigured) return send(fail('未配置 KPanel 凭据，无法查看远程主机'))
+      let rh
+      try { rh = await kpanelRemoteHost(hostId) } catch (e) { return send(fail('KPanel 数据获取失败：' + (e.message || e))) }
+      if (!rh) return send(fail('未知主机：' + hostId))
+      if (p === '/api/ops/metrics') {
+        const range = url.searchParams.get('range') || '1h'
+        try {
+          return send(ok(await kpanelRemoteMetrics(hostId, ['1h', '6h', '24h'].includes(range) ? range : '1h')))
+        } catch (e) { return send(fail('KPanel 监控数据获取失败：' + (e.message || e))) }
+      }
+      if (p === '/api/ops/host') return send(ok(remoteHostInfo(rh)))
+      if (p === '/api/ops/disk') {
+        // 远程只有根盘用量（来自 lastSnapshot.telemetry.disk），大目录统计仅本机可用
+        const d = rh.telemetry.disk
+        return send(ok({
+          disks: [{ mount: '/', totalGB: +(d.totalBytes / 1e9).toFixed(1), usedGB: +(d.usedBytes / 1e9).toFixed(1), usedPct: d.usagePercent ?? 0 }],
+          topDirs: [], scanning: false, remote: true
+        }))
+      }
+      if (p === '/api/ops/docker' || p === '/api/ops/images' || p === '/api/ops/processes') {
+        return send(fail('该主机不支持远程查看（KPanel 未提供远程接口）'))
+      }
+      const logMatch = p.match(/^\/api\/ops\/docker\/([0-9a-f]{12})\/logs$/)
+      if (logMatch && req.method === 'GET') return send(fail('该主机不支持远程查看日志（KPanel 未提供远程接口）'))
+      return send(fail('unknown ops api'), 404)
+    }
+
+    // --- 只读查询（公开，本机） ---
     if (p === '/api/ops/metrics') {
       const range = url.searchParams.get('range') || '1h'
       const points = metricsForRange(['1h', '6h', '24h'].includes(range) ? range : '1h')
