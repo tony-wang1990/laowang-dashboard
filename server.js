@@ -650,6 +650,170 @@ async function weather(req, url) {
   return weatherFromOpenMeteo('')
 }
 
+// ---------- 烟台风力/停航：Open-Meteo 预报 + 海洋 + 中央气象台预警 ----------
+// yatao 在烟台崆峒岛上班，坐船往返；陆岛航线风力 ≥6 级停航。
+// 陆地风（烟台市区 37.46, 121.44）和海面风（渤海海峡 37.5, 121.4）都用
+// forecast 接口（marine 接口没有风，传 wind_speed_10m 会返回 undefined）；
+// 浪高用 marine 接口。海洋模式网格较粗，浪高代表渤海海峡一带海况，
+// 不是崆峒岛岸边的精确值，卡片上不要写“崆峒岛精确浪高”。
+// 蒲氏风级（m/s）：5 级 8.0–10.7，6 级 10.8–13.8，7 级 13.9–17.1，8 级 17.2–20.7。
+// 6 级停航是陆岛小客船的标准；山东规定 7 级以上港口不让旅客上船，
+// 海事局禁航线是 8 级——风险灯按陆岛航线标准标，并注明仅供参考、非官方通知。
+const BEAUFORT_MIN = [0.3, 1.6, 3.4, 5.5, 8.0, 10.8, 13.9, 17.2, 20.8, 24.5, 28.5, 32.7]
+function beaufort(ms) {
+  if (ms == null || isNaN(ms)) return null
+  let b = 0
+  for (let i = 0; i < BEAUFORT_MIN.length; i++) if (ms >= BEAUFORT_MIN[i]) b = i + 1
+  return b
+}
+const DIR16 = ['北', '北东北', '东北', '东东北', '东', '东东南', '东南', '南东南', '南', '南西南', '西南', '西西南', '西', '西西北', '西北', '北西北']
+function dirText(deg) {
+  if (deg == null || isNaN(deg)) return ''
+  return DIR16[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16]
+}
+const round1 = (v) => (v == null || isNaN(v) ? null : +Number(v).toFixed(1))
+
+// 固定上游接口也走 safeFetchText（SSRF 统一出口）+ JSON 解析 + 状态码检查
+async function fetchJsonSafe(url, { timeoutMs = 8000, headers = {} } = {}) {
+  const { status, text } = await safeFetchText(url, { timeoutMs, headers })
+  if (status >= 400) throw new Error('HTTP ' + status)
+  return JSON.parse(text)
+}
+
+async function windForecast(lat, lon) {
+  return fetchJsonSafe(
+    `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+    `&current=wind_speed_10m,wind_direction_10m,wind_gusts_10m` +
+    `&hourly=wind_speed_10m,wind_gusts_10m&forecast_days=7&wind_speed_unit=ms&timezone=Asia%2FShanghai`,
+    { timeoutMs: 8000 }
+  )
+}
+
+function windSummary(d) {
+  const c = d.current || {}
+  const windMs = round1(c.wind_speed_10m)
+  const gustMs = round1(c.wind_gusts_10m)
+  return {
+    windMs, windKmh: windMs == null ? null : round1(windMs * 3.6),
+    gustMs, gustKmh: gustMs == null ? null : round1(gustMs * 3.6),
+    dirDeg: c.wind_direction_10m ?? null, dirText: dirText(c.wind_direction_10m),
+    beaufort: beaufort(windMs), gustBeaufort: beaufort(gustMs)
+  }
+}
+
+// 逐小时 -> 逐日最大风（7 天，预报时区本地日期）
+function dailyMaxWind(hourly) {
+  const days = {}
+  const times = hourly?.time || []
+  for (let i = 0; i < times.length; i++) {
+    const date = times[i].slice(0, 10)
+    const d = days[date] || (days[date] = { date, maxWind: 0, maxGust: 0 })
+    const w = hourly.wind_speed_10m?.[i], g = hourly.wind_gusts_10m?.[i]
+    if (w != null) d.maxWind = Math.max(d.maxWind, w)
+    if (g != null) d.maxGust = Math.max(d.maxGust, g)
+  }
+  const week = '日一二三四五六'
+  return Object.values(days).slice(0, 7).map((d, idx) => {
+    const wd = week[new Date(d.date + 'T12:00:00+08:00').getDay()]
+    const maxWind = round1(d.maxWind), maxGust = round1(d.maxGust)
+    return {
+      date: d.date.slice(5), label: idx === 0 ? '今天' : idx === 1 ? '明天' : idx === 2 ? '后天' : '周' + wd,
+      maxWindMs: maxWind, maxWindKmh: maxWind == null ? null : round1(maxWind * 3.6),
+      maxGustMs: maxGust, maxGustKmh: maxGust == null ? null : round1(maxGust * 3.6),
+      beaufort: beaufort(maxWind), gustBeaufort: beaufort(maxGust)
+    }
+  })
+}
+
+// 从当前小时起的未来 N 小时（预报时间按目标时区返回）
+function nextHours(hourly, currentTime, n) {
+  const times = hourly?.time || []
+  const key = currentTime ? currentTime.slice(0, 13) + ':00' : null
+  let idx = key ? times.findIndex((t) => t >= key) : 0
+  if (idx < 0) idx = 0
+  return times.slice(idx, idx + n).map((t, i) => ({
+    time: t.slice(11, 16),
+    windMs: round1(hourly.wind_speed_10m?.[idx + i]),
+    gustMs: round1(hourly.wind_gusts_10m?.[idx + i]),
+    beaufort: beaufort(hourly.wind_speed_10m?.[idx + i])
+  }))
+}
+
+async function yantaiWind() {
+  const [land, sea] = await Promise.all([
+    windForecast(37.46, 121.44),
+    windForecast(37.5, 121.4)
+  ])
+  // 浪高：marine 接口失败不影响风力数据，降级为 null
+  let waves = null
+  try {
+    const m = await fetchJsonSafe(
+      'https://marine-api.open-meteo.com/v1/marine?latitude=37.5&longitude=121.4' +
+      '&current=wave_height,wind_wave_height,swell_wave_height,wave_period&timezone=Asia%2FShanghai&forecast_days=3',
+      { timeoutMs: 8000 }
+    )
+    const c = m.current || {}
+    waves = {
+      height: round1(c.wave_height), windWave: round1(c.wind_wave_height),
+      swell: round1(c.swell_wave_height), period: round1(c.wave_period)
+    }
+  } catch { /* 浪高暂无数据 */ }
+  const landSum = windSummary(land)
+  const seaSum = windSummary(sea)
+  const riskB = Math.max(seaSum.beaufort ?? 0, seaSum.gustBeaufort ?? 0)
+  const risk = riskB >= 7
+    ? { level: 'red', beaufort: riskB, text: '停航风险高' }
+    : riskB >= 6
+      ? { level: 'yellow', beaufort: riskB, text: '陆岛航线停航风险' }
+      : { level: 'green', beaufort: riskB, text: '正常通行' }
+  return ok({
+    updatedAt: new Date().toISOString(),
+    land: landSum, sea: seaSum, waves, risk: { ...risk, note: '陆岛航线标准，仅供参考，非官方通知' },
+    days: dailyMaxWind(sea.hourly),
+    seaHours: nextHours(sea.hourly, sea.current?.time, 12)
+  })
+}
+
+// ---------- 天气预警：中央气象台 findAlarm（免费免 key） ----------
+// 实测结构：data.page.list（+ data.provinceAlarms）每条只有
+// { alertid, issuetime: "2026/11/24 21:36", title: "云南省昭通市镇雄县气象台发布暴雪蓝色预警信号",
+//   url: "/publish/alarm/xxx.html", pic }，没有 signaltype/signallevel 字段，
+// 级别和类型从标题解析：/发布(.+?)(蓝色|黄色|橙色|红色)预警/。
+// province 参数不要用（实测返回非 JSON）；拉全国列表（pageSize 200），
+// 服务端按标题过滤：含城市名的；或 province 参数时，省级站发布的预警
+// （标题以“XX省…发布”开头、发布前无“市”字）也算——市级标题如“山东省青岛市…”会被排除。
+function parseWarningTitle(title) {
+  const m = String(title || '').match(/发布(.+?)(蓝色|黄色|橙色|红色)预警/)
+  if (!m) return null
+  return { type: m[1], level: m[2] }
+}
+async function warningsFor(city, province, type) {
+  const d = await fetchJsonSafe('http://www.nmc.cn/rest/findAlarm?pageNo=1&pageSize=200', { timeoutMs: 8000 })
+  const raw = [...(d.data?.page?.list || []), ...(d.data?.provinceAlarms || [])]
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const provRe = province ? new RegExp('^' + esc(province) + '[^市]*发布') : null
+  const seen = new Set()
+  const items = []
+  for (const r of raw) {
+    if (!r || !r.alertid || seen.has(r.alertid)) continue
+    seen.add(r.alertid)
+    const parsed = parseWarningTitle(r.title)
+    if (!parsed) continue
+    if (type && parsed.type !== type) continue
+    const title = r.title || ''
+    const cityHit = city ? title.includes(city) : false
+    const provHit = provRe ? provRe.test(title) : false
+    if (!cityHit && !provHit) continue
+    items.push({
+      alertid: r.alertid, title, type: parsed.type, level: parsed.level,
+      issuetime: r.issuetime || '',
+      url: r.url ? 'https://www.nmc.cn' + r.url : 'https://www.nmc.cn/f/alarm.html'
+    })
+  }
+  items.sort((a, b) => String(b.issuetime).localeCompare(String(a.issuetime)))
+  return ok({ city: city || '', province: province || '', type: type || '', count: items.length, items: items.slice(0, 20) })
+}
+
 // ---------- 布局存储 ----------
 function layoutPath() { return path.join(DATA_DIR, 'layout.json') }
 function loadLayout() {
@@ -711,6 +875,17 @@ const routes = {
     return ok({ base: 'USD', date: d.date, rates: d.rates })
   }),
   '/api/weather': (req, url) => cached('weather:' + ((url?.searchParams?.get('city') || '').trim() || 'default'), 600_000, () => weather(req, url)),
+  // 烟台风力/停航（风浪 30 分钟缓存）；天气预警（按城市查，10 分钟缓存）
+  '/api/yantai-wind': () => cached('yantai-wind', 1800_000, yantaiWind),
+  '/api/warnings': (req, url) => cached(
+    'warnings:' + ['city', 'province', 'type'].map((k) => (url?.searchParams?.get(k) || '').trim()).join('|'),
+    600_000,
+    () => warningsFor(
+      (url?.searchParams?.get('city') || '').trim(),
+      (url?.searchParams?.get('province') || '').trim(),
+      (url?.searchParams?.get('type') || '').trim()
+    )
+  ),
   '/api/news': () => cached('news', 300_000, async () => {
     const out = { hn: [], sspai: [] }
     try {

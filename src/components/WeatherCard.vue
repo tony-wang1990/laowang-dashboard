@@ -22,6 +22,7 @@
           <div class="label">{{ h.text || weatherText(h.code) }}</div>
         </div>
       </div>
+      <WarningList :city="warnCity" head-text="天气预警" empty-text="当前无生效预警" />
     </div>
   </section>
 </template>
@@ -30,11 +31,14 @@
 import { computed } from 'vue'
 const props = defineProps({ config: { type: Object, default: () => ({}) }, title: { type: String, default: '' } })
 import { useApi, weatherText } from '../useApi.js'
+import WarningList from './WarningList.vue'
 // 城市改了自动重拉：空 = 默认上海
 const apiPath = computed(() => {
   const city = (props.config.city || '').trim()
   return city ? `/api/weather?city=${encodeURIComponent(city)}` : '/api/weather'
 })
+// 预警按卡片自己的城市查（默认上海；国外城市查不到中国预警，显示无预警，不报错）
+const warnCity = computed(() => (props.config.city || '').trim() || '上海')
 const { data, loading, error } = useApi(apiPath, 5 * 60 * 1000)
 </script>
 

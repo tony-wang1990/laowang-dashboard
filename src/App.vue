@@ -115,6 +115,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import HeaderBar from './components/HeaderBar.vue'
 import WeatherCard from './components/WeatherCard.vue'
+import YantaiWindCard from './components/YantaiWindCard.vue'
 import SystemCard from './components/SystemCard.vue'
 import DockerCard from './components/DockerCard.vue'
 import UptimeCard from './components/UptimeCard.vue'
@@ -137,7 +138,7 @@ import OpsView from './components/OpsView.vue'
 import { CARD_TYPES, cardTypeOf, newCard, DEFAULT_LAYOUT } from './cards.js'
 
 const COMPONENTS = {
-  weather: WeatherCard, system: SystemCard, docker: DockerCard, uptime: UptimeCard,
+  weather: WeatherCard, 'yantai-wind': YantaiWindCard, system: SystemCard, docker: DockerCard, uptime: UptimeCard,
   crypto: CryptoCard, rates: RatesCard, github: GithubCard, trending: TrendingCard,
   news: NewsCard, quicklinks: QuickLinks, notes: NotesCard,
   text: TextCard, metric: MetricCard, stat: StatCard, statstrip: StatStrip, chart: ChartCard, rss: RssCard,
@@ -198,6 +199,8 @@ function clone(v) { return JSON.parse(JSON.stringify(v)) }
 //    h=4（以前误以为 h=3 够，自动调整会把它长回 4）；默认布局已改成 h=4，
 //    这里不再动它，只保证老布局里被误缩到 h=3 的也补回 h=4。
 // 4) 站点监测 uptime-1 补到 h=3，和同行的加密货币 / 汇率底部平齐。
+// 5) 烟台风力/停航卡：老布局里没有就补一张，放在指标条之后（y=14+2=16），
+//    该行及以下的卡整体下移 4 行腾地方；已有该卡的不重复加。
 function migrateLayout(items) {
   let changed = false
   const hasStat = items.some((it) => it.type === 'stat')
@@ -218,6 +221,13 @@ function migrateLayout(items) {
     items.forEach((it) => { if (it.type !== 'stat' && it.y >= rowY && it.y < rowY + 2) it.y += 2 })
     for (let i = items.length - 1; i >= 0; i--) if (items[i].type === 'stat') items.splice(i, 1)
     items.push({ i: 'statstrip-1', x: 0, y: rowY, w: 12, h: 2, type: 'statstrip', title: '实时指标', config: {} })
+    changed = true
+  }
+  if (!items.some((it) => it.type === 'yantai-wind')) {
+    const strip = items.find((it) => it.type === 'statstrip')
+    const insertY = strip ? strip.y + strip.h : 14
+    items.forEach((it) => { if (it.y >= insertY) it.y += 4 })
+    items.push({ i: 'yantai-wind-1', x: 0, y: insertY, w: 6, h: 4, type: 'yantai-wind', title: '烟台风力/停航', config: {} })
     changed = true
   }
   const qi = items.findIndex((it) => it.i === 'quicklinks-1')

@@ -7,6 +7,7 @@ export const CARD_TYPES = [
     fields: [
       { key: 'city', label: '城市', kind: 'text', placeholder: '上海（留空默认上海，如：烟台 / 廊坊 / Los Angeles）' }
     ] },
+  { type: 'yantai-wind', name: '烟台风力/停航', desc: '陆地/海面风力、浪高、停航风险、7 天展望、大风预警', color: 'var(--cyan)', w: 6, h: 4, fields: [] },
   { type: 'system', name: '服务器状态', desc: 'CPU、内存、磁盘、运行时间、公网 IP', color: 'var(--emerald)', w: 4, h: 3, fields: [] },
   { type: 'docker', name: 'Docker 容器', desc: 'VPS 上的容器列表与状态', color: 'var(--violet)', w: 4, h: 3, fields: [] },
   { type: 'uptime', name: '站点监测', desc: '三个站点的在线状态与延迟', color: 'var(--emerald)', w: 4, h: 2, fields: [] },
@@ -105,8 +106,10 @@ export const DEFAULT_LAYOUT = [
   { i: 'news-1', x: 0, y: 10, w: 6, h: 4, type: 'news', title: '科技资讯', config: {} },
   { i: 'chart-1', x: 6, y: 10, w: 6, h: 4, type: 'chart', title: '服务器趋势', config: { metric: 'load' } },
   { ...STAT_STRIP, config: { ...STAT_STRIP.config } },
-  { i: 'text-1', x: 0, y: 16, w: 6, h: 2, type: 'text', title: '关于这个看板', config: { text: '老王数据看板：天气、服务器、Docker、站点、GitHub、行情、资讯，一屏尽览。右上角「编辑布局」可以拖动、放大缩小、添加和删除卡片。', links: '订阅转换|https://sub.199060.xyz/\n老王导航|http://67.215.229.127:8080/\nGitHub|https://github.com/tony-wang1990' } },
-  { i: 'rss-1', x: 0, y: 18, w: 6, h: 4, type: 'rss', title: '少数派 RSS', config: { url: 'https://sspai.com/feed' } },
-  { i: 'quicklinks-1', x: 6, y: 16, w: 6, h: 3, type: 'quicklinks', title: '快捷入口', config: {} },
-  { i: 'notes-1', x: 6, y: 18, w: 6, h: 2, type: 'notes', title: '备忘小记', config: {} }
+  // 烟台风力/停航卡：指标条之后第一排（y=16），下面四张卡整体下移 4 行
+  { i: 'yantai-wind-1', x: 0, y: 16, w: 6, h: 4, type: 'yantai-wind', title: '烟台风力/停航', config: {} },
+  { i: 'text-1', x: 0, y: 20, w: 6, h: 2, type: 'text', title: '关于这个看板', config: { text: '老王数据看板：天气、服务器、Docker、站点、GitHub、行情、资讯，一屏尽览。右上角「编辑布局」可以拖动、放大缩小、添加和删除卡片。', links: '订阅转换|https://sub.199060.xyz/\n老王导航|http://67.215.229.127:8080/\nGitHub|https://github.com/tony-wang1990' } },
+  { i: 'rss-1', x: 0, y: 22, w: 6, h: 4, type: 'rss', title: '少数派 RSS', config: { url: 'https://sspai.com/feed' } },
+  { i: 'quicklinks-1', x: 6, y: 20, w: 6, h: 3, type: 'quicklinks', title: '快捷入口', config: {} },
+  { i: 'notes-1', x: 6, y: 22, w: 6, h: 2, type: 'notes', title: '备忘小记', config: {} }
 ]
