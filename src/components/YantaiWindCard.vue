@@ -19,11 +19,11 @@
           <span class="wind-val">{{ fmt(data.land.windMs) }} m/s（{{ data.land.beaufort }} 级）· 阵风 {{ fmt(data.land.gustMs) }} m/s（{{ data.land.gustBeaufort }} 级）· {{ data.land.dirText || '—' }}风</span>
         </div>
         <div class="wind-row">
-          <span class="label">海面风 · 渤海海峡</span>
+          <span class="label">海面风 · 崆峒岛附近海域</span>
           <span class="wind-val">{{ fmt(data.sea.windMs) }} m/s（{{ data.sea.beaufort }} 级）· 阵风 {{ fmt(data.sea.gustMs) }} m/s（{{ data.sea.gustBeaufort }} 级）· {{ data.sea.dirText || '—' }}风</span>
         </div>
         <div class="wind-row">
-          <span class="label">浪高 · 渤海海峡</span>
+          <span class="label">浪高 · 崆峒岛附近海域</span>
           <span class="wind-val" v-if="data.waves">有效波高 {{ fmt(data.waves.height) }} m · 风浪 {{ fmt(data.waves.windWave) }} m · 涌浪 {{ fmt(data.waves.swell) }} m · 周期 {{ fmt(data.waves.period) }} s</span>
           <span class="wind-val" v-else>浪高暂无数据</span>
         </div>
@@ -69,14 +69,15 @@ const updatedText = computed(() => {
     return '更新于 ' + String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0')
   } catch { return 'Open-Meteo · 免费免 key' }
 })
-// 当日最大风（阵风）定灯：≥7 级红，6 级黄，其余正常
+// 当日定级只看持续风（阵风只展示、不定级）：持续风 ≥8 级（＞7 级）停航，
+// 6–7 级停航风险，其余正常——阵风平时也常冲到 7–9 级，不能按阵风定级
 function dayFlagClass(d) {
-  const b = Math.max(d.beaufort ?? 0, d.gustBeaufort ?? 0)
-  return b >= 7 ? 'flag-red' : b >= 6 ? 'flag-yellow' : 'flag-green'
+  const b = d.beaufort ?? 0
+  return b >= 8 ? 'flag-red' : b >= 6 ? 'flag-yellow' : 'flag-green'
 }
 function dayFlagText(d) {
-  const b = Math.max(d.beaufort ?? 0, d.gustBeaufort ?? 0)
-  return b >= 7 ? '停航风险高' : b >= 6 ? '停航风险' : '正常'
+  const b = d.beaufort ?? 0
+  return b >= 8 ? '停航' : b >= 6 ? '停航风险' : '正常'
 }
 </script>
 

@@ -80,7 +80,7 @@ export function newCard(type) {
 // 实时指标条：一整条通栏大数字（5 个指标一排），替代原来 5 张分开的
 // 单指标卡——分开摆会在 12 列里左右各留 1 列空隙、窄屏还会排错行。
 // App.vue 的布局迁移会把旧的 stat-* 换成它；单张 stat 卡仍可单独添加。
-export const STAT_STRIP = { i: 'statstrip-1', x: 0, y: 14, w: 12, h: 2, type: 'statstrip', title: '实时指标', config: {} }
+export const STAT_STRIP = { i: 'statstrip-1', x: 0, y: 18, w: 12, h: 2, type: 'statstrip', title: '实时指标', config: {} }
 
 // KPanel 式单指标卡：5 张一排（12 列网格里左右各留 1 列，看着居中）。
 // App.vue 的布局迁移用同一份定义，老布局里的 metric-1 会被它替换。
@@ -93,21 +93,22 @@ export const STAT_CARDS = [
 ]
 
 export const DEFAULT_LAYOUT = [
-  { i: 'weather-1', x: 0, y: 0, w: 4, h: 3, type: 'weather', title: '上海天气', config: {} },
-  { i: 'system-1', x: 4, y: 0, w: 4, h: 3, type: 'system', title: '服务器状态', config: {} },
-  { i: 'docker-1', x: 8, y: 0, w: 4, h: 3, type: 'docker', title: 'Docker 容器', config: {} },
-  // 站点监测 / 加密货币 / 汇率同一行都 h=3，底部平齐（以前 uptime 只有 h=2）
-  { i: 'uptime-1', x: 0, y: 3, w: 4, h: 3, type: 'uptime', title: '站点监测', config: {} },
-  { i: 'crypto-1', x: 4, y: 3, w: 4, h: 3, type: 'crypto', title: '加密货币', config: {} },
-  { i: 'rates-1', x: 8, y: 3, w: 4, h: 3, type: 'rates', title: '汇率 · 美元', config: {} },
+  // 第一排：天气 (w=4) + 烟台风力/停航 (w=8) 同一排，天气 h 补到 4 和风力卡取齐
+  { i: 'weather-1', x: 0, y: 0, w: 4, h: 4, type: 'weather', title: '上海天气', config: {} },
+  { i: 'yantai-wind-1', x: 4, y: 0, w: 8, h: 4, type: 'yantai-wind', title: '烟台风力/停航', config: {} },
+  // 第二排：服务器状态 / Docker / 站点监测（都 h=3，底部平齐）
+  { i: 'system-1', x: 0, y: 4, w: 4, h: 3, type: 'system', title: '服务器状态', config: {} },
+  { i: 'docker-1', x: 4, y: 4, w: 4, h: 3, type: 'docker', title: 'Docker 容器', config: {} },
+  { i: 'uptime-1', x: 8, y: 4, w: 4, h: 3, type: 'uptime', title: '站点监测', config: {} },
+  // 第三排：加密货币 / 汇率（改成 w=6 各占一半，不然 4+4 会留 4 列空洞）
+  { i: 'crypto-1', x: 0, y: 7, w: 6, h: 3, type: 'crypto', title: '加密货币', config: {} },
+  { i: 'rates-1', x: 6, y: 7, w: 6, h: 3, type: 'rates', title: '汇率 · 美元', config: {} },
   // 列表类卡片实测内容约 440px，需要 h=4（每行约 45px，8 条约 360px + 标题 + 内边距）
-  { i: 'github-1', x: 0, y: 6, w: 6, h: 4, type: 'github', title: '我的 GitHub 仓库', config: {} },
-  { i: 'trending-1', x: 6, y: 6, w: 6, h: 4, type: 'trending', title: 'GitHub 本周趋势', config: {} },
-  { i: 'news-1', x: 0, y: 10, w: 6, h: 4, type: 'news', title: '科技资讯', config: {} },
-  { i: 'chart-1', x: 6, y: 10, w: 6, h: 4, type: 'chart', title: '服务器趋势', config: { metric: 'load' } },
+  { i: 'github-1', x: 0, y: 10, w: 6, h: 4, type: 'github', title: '我的 GitHub 仓库', config: {} },
+  { i: 'trending-1', x: 6, y: 10, w: 6, h: 4, type: 'trending', title: 'GitHub 本周趋势', config: {} },
+  { i: 'news-1', x: 0, y: 14, w: 6, h: 4, type: 'news', title: '科技资讯', config: {} },
+  { i: 'chart-1', x: 6, y: 14, w: 6, h: 4, type: 'chart', title: '服务器趋势', config: { metric: 'load' } },
   { ...STAT_STRIP, config: { ...STAT_STRIP.config } },
-  // 烟台风力/停航卡：指标条之后第一排（y=16），下面四张卡整体下移 4 行
-  { i: 'yantai-wind-1', x: 0, y: 16, w: 6, h: 4, type: 'yantai-wind', title: '烟台风力/停航', config: {} },
   { i: 'text-1', x: 0, y: 20, w: 6, h: 2, type: 'text', title: '关于这个看板', config: { text: '老王数据看板：天气、服务器、Docker、站点、GitHub、行情、资讯，一屏尽览。右上角「编辑布局」可以拖动、放大缩小、添加和删除卡片。', links: '订阅转换|https://sub.199060.xyz/\n老王导航|http://67.215.229.127:8080/\nGitHub|https://github.com/tony-wang1990' } },
   { i: 'rss-1', x: 0, y: 22, w: 6, h: 4, type: 'rss', title: '少数派 RSS', config: { url: 'https://sspai.com/feed' } },
   { i: 'quicklinks-1', x: 6, y: 20, w: 6, h: 3, type: 'quicklinks', title: '快捷入口', config: {} },

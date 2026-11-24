@@ -651,14 +651,16 @@ async function weather(req, url) {
 }
 
 // ---------- 烟台风力/停航：Open-Meteo 预报 + 海洋 + 中央气象台预警 ----------
-// yatao 在烟台崆峒岛上班，坐船往返；陆岛航线风力 ≥6 级停航。
-// 陆地风（烟台市区 37.46, 121.44）和海面风（渤海海峡 37.5, 121.4）都用
-// forecast 接口（marine 接口没有风，传 wind_speed_10m 会返回 undefined）；
-// 浪高用 marine 接口。海洋模式网格较粗，浪高代表渤海海峡一带海况，
-// 不是崆峒岛岸边的精确值，卡片上不要写“崆峒岛精确浪高”。
+// yatao 在烟台崆峒岛上班，坐船往返；陆岛航线风力大于 7 级停航。
+// 陆地风（烟台市区 37.46, 121.44）和海面风（崆峒岛附近海域，岛屿坐标经
+// Nominatim 核实 37.5615, 121.5146，取 37.56, 121.51）都用 forecast 接口
+// （marine 接口没有风，传 wind_speed_10m 会返回 undefined）；浪高用 marine 接口。
+// 实测：forecast 接口在旧点（37.5, 121.4）和新点返回值完全一致（同一模型格点）；
+// marine 接口新点波高 0.68 m / 周期 4.3 s，旧点 0.48 m / 3.65 s（不同格点）。
+// 海洋模式网格较粗，浪高代表崆峒岛附近一带海况，不是岸边的精确值。
 // 蒲氏风级（m/s）：5 级 8.0–10.7，6 级 10.8–13.8，7 级 13.9–17.1，8 级 17.2–20.7。
-// 6 级停航是陆岛小客船的标准；山东规定 7 级以上港口不让旅客上船，
-// 海事局禁航线是 8 级——风险灯按陆岛航线标准标，并注明仅供参考、非官方通知。
+// 停航只看海面持续风速（yatao 纠正：阵风平时也常冲到 7–9 级，不能按阵风定级）：
+// 持续风 ＜6 级正常，6–7 级有停航风险，＞7 级（≥8 级）停航；阵风只展示、不定级。
 const BEAUFORT_MIN = [0.3, 1.6, 3.4, 5.5, 8.0, 10.8, 13.9, 17.2, 20.8, 24.5, 28.5, 32.7]
 function beaufort(ms) {
   if (ms == null || isNaN(ms)) return null
@@ -742,13 +744,13 @@ function nextHours(hourly, currentTime, n) {
 async function yantaiWind() {
   const [land, sea] = await Promise.all([
     windForecast(37.46, 121.44),
-    windForecast(37.5, 121.4)
+    windForecast(37.56, 121.51)
   ])
   // 浪高：marine 接口失败不影响风力数据，降级为 null
   let waves = null
   try {
     const m = await fetchJsonSafe(
-      'https://marine-api.open-meteo.com/v1/marine?latitude=37.5&longitude=121.4' +
+      'https://marine-api.open-meteo.com/v1/marine?latitude=37.56&longitude=121.51' +
       '&current=wave_height,wind_wave_height,swell_wave_height,wave_period&timezone=Asia%2FShanghai&forecast_days=3',
       { timeoutMs: 8000 }
     )
@@ -760,15 +762,17 @@ async function yantaiWind() {
   } catch { /* 浪高暂无数据 */ }
   const landSum = windSummary(land)
   const seaSum = windSummary(sea)
-  const riskB = Math.max(seaSum.beaufort ?? 0, seaSum.gustBeaufort ?? 0)
-  const risk = riskB >= 7
-    ? { level: 'red', beaufort: riskB, text: '停航风险高' }
+  // 风险只按海面持续风速定级（阵风只展示、不参与定级）：
+  // 持续风 ＜6 级绿“正常通行”；6–7 级黄“停航风险”；＞7 级（≥8 级）红“停航”
+  const riskB = seaSum.beaufort ?? 0
+  const risk = riskB >= 8
+    ? { level: 'red', beaufort: riskB, text: '停航' }
     : riskB >= 6
-      ? { level: 'yellow', beaufort: riskB, text: '陆岛航线停航风险' }
+      ? { level: 'yellow', beaufort: riskB, text: '停航风险' }
       : { level: 'green', beaufort: riskB, text: '正常通行' }
   return ok({
     updatedAt: new Date().toISOString(),
-    land: landSum, sea: seaSum, waves, risk: { ...risk, note: '陆岛航线标准，仅供参考，非官方通知' },
+    land: landSum, sea: seaSum, waves, risk: { ...risk, note: '以崆峒岛附近海面持续风速为准，阵风仅供参考；持续风 6–7 级有停航风险，＞7 级停航（陆岛航线参考，非官方通知）' },
     days: dailyMaxWind(sea.hourly),
     seaHours: nextHours(sea.hourly, sea.current?.time, 12)
   })

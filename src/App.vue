@@ -64,7 +64,7 @@
             <button class="icon-btn" @click.stop="openEditor(item)" title="编辑卡片">⚙</button>
             <button class="icon-btn danger" @click.stop="removeCard(item.i)" title="删除卡片">×</button>
           </div>
-          <component :is="componentOf(item.type)" :config="item.config || {}" :title="item.title || cardTypeOf(item.type).name" />
+          <component :is="componentOf(item.type)" :config="item.config || {}" :title="item.title || cardTypeOf(item.type).name" @update:city="onCardCity($event, item)" />
         </div>
       </grid-item>
     </grid-layout>
@@ -201,6 +201,8 @@ function clone(v) { return JSON.parse(JSON.stringify(v)) }
 // 4) 站点监测 uptime-1 补到 h=3，和同行的加密货币 / 汇率底部平齐。
 // 5) 烟台风力/停航卡：老布局里没有就补一张，放在指标条之后（y=14+2=16），
 //    该行及以下的卡整体下移 4 行腾地方；已有该卡的不重复加。
+// 6) 风力卡挪到天气卡右边同一排（天气 (0,0,4,4)，风力 (4,0,8,4)），其余卡
+//    按新默认布局重排；只做一次（localStorage 标记），用户自己拖走后不再动它。
 function migrateLayout(items) {
   let changed = false
   const hasStat = items.some((it) => it.type === 'stat')
@@ -229,6 +231,33 @@ function migrateLayout(items) {
     items.forEach((it) => { if (it.y >= insertY) it.y += 4 })
     items.push({ i: 'yantai-wind-1', x: 0, y: insertY, w: 6, h: 4, type: 'yantai-wind', title: '烟台风力/停航', config: {} })
     changed = true
+  }
+  // 6) 风力卡挪到天气卡右边同一排：天气 (0,0,4,4)，风力 (4,0,8,4)；
+  //    原第一排的服务器状态 / Docker 下移到 y=4，站点监测也挪到 y=4 (x=8)；
+  //    加密货币 / 汇率改成 w=6 放到 y=7；y 在 [3,16) 的其它卡整体下移 4 行
+  //    （仓库 / 趋势 / 资讯 / 趋势图 / 指标条），y≥16 的卡不动。
+  //    只做一次：localStorage 标记幂等——用户之后自己拖走风力卡不再动它；
+  //    天气卡不在默认位置（被用户挪过 / 删了）时跳过，不跟用户抢布局。
+  const WIND_RIGHT_KEY = 'laowang-dashboard-migrated-wind-right-v1'
+  let windRightDone = false
+  try { windRightDone = !!localStorage.getItem(WIND_RIGHT_KEY) } catch { windRightDone = true }
+  if (!windRightDone) {
+    try { localStorage.setItem(WIND_RIGHT_KEY, '1') } catch { /* 忽略 */ }
+    const w0 = items.find((it) => it.i === 'weather-1')
+    const wind = items.find((it) => it.type === 'yantai-wind')
+    if (w0 && wind && w0.x === 0 && w0.y === 0 && !(wind.x === 4 && wind.y === 0 && wind.w === 8)) {
+      const move = (id, x, y, w, h) => {
+        const it = items.find((t) => t.i === id)
+        if (it) { it.x = x; it.y = y; if (w) it.w = w; if (h) it.h = h }
+      }
+      wind.x = 4; wind.y = 0; wind.w = 8; wind.h = 4
+      w0.h = 4
+      move('system-1', 0, 4); move('docker-1', 4, 4); move('uptime-1', 8, 4)
+      move('crypto-1', 0, 7, 6); move('rates-1', 6, 7, 6)
+      const explicit = new Set(['weather-1', 'yantai-wind-1', 'system-1', 'docker-1', 'uptime-1', 'crypto-1', 'rates-1'])
+      items.forEach((it) => { if (!explicit.has(it.i) && it.y >= 3 && it.y < 16) it.y += 4 })
+      changed = true
+    }
   }
   const qi = items.findIndex((it) => it.i === 'quicklinks-1')
   if (qi >= 0 && items[qi].h === 2) {
@@ -274,6 +303,10 @@ async function loadLayout() {
   const changed = migrateLayout(items)
   layout.value = items
   if (changed) persist()
+  // 布局落定、网格渲染后再挂自适应高度的观察器：
+  // 新浏览器首次打开时布局是异步从服务端拉的，onMounted 里的那次调用
+  // 赶不上（当时网格还是空的），不补这一次就永远量不到卡片高度
+  nextTick(setupAutoResize)
 }
 
 let saveTimer = null
@@ -341,7 +374,13 @@ function autoResizePass() {
     needById.forEach((need, id) => {
       if (need > (narrowH.get(id) ?? 0)) { narrowH.set(id, need); changed = true }
     })
-    if (changed) narrowTick.value++
+    if (changed) {
+      narrowTick.value++
+      // 每轮最多只长 1 行，但卡片变高不会触发它自己的 ResizeObserver
+      // （高度由内容撑开，和网格项高度无关），所以这里主动续一轮，
+      // 直到量够为止；量够了 changed=false，链条自然停下
+      scheduleAutoResize()
+    }
     return
   }
   // 2) 同一行取齐：行高 = 该行所有卡片内容需要的最大值
@@ -364,6 +403,9 @@ function autoResizePass() {
     // watcher → compact → 下面的卡自动下移 → 触发 layout-updated 回写。
     layout.value = [...layout.value]
     persist()
+    // 同窄屏：每轮最多只长 1 行，卡片变高不一定触发 ResizeObserver，
+    // 主动续一轮直到量够；量够了 changed=false，链条自然停下
+    scheduleAutoResize()
   }
 }
 // 一次性高度归一：旧版图表画布无限伸高 + 窄屏换行曾把不少卡片的 h 顶大
@@ -407,13 +449,16 @@ function observeCards() {
   })
 }
 function setupAutoResize() {
-  cardObserver = new ResizeObserver(() => scheduleAutoResize())
+  // 可重复调用（loadLayout 里布局落定后会再调一次）：观察器只建一次，
+  // 新出现的卡片由 observeCards() 补挂；网格刚出现时再挂 MutationObserver
+  if (!cardObserver) cardObserver = new ResizeObserver(() => scheduleAutoResize())
   observeCards()
-  const grid = document.querySelector('.vue-grid-layout')
-  if (grid) {
-    // 新增 / 删除卡片时重新扫描
-    gridMutObserver = new MutationObserver(() => { observeCards(); scheduleAutoResize() })
-    gridMutObserver.observe(grid, { childList: true, subtree: true })
+  if (!gridMutObserver) {
+    const grid = document.querySelector('.vue-grid-layout')
+    if (grid) {
+      gridMutObserver = new MutationObserver(() => { observeCards(); scheduleAutoResize() })
+      gridMutObserver.observe(grid, { childList: true, subtree: true })
+    }
   }
   scheduleAutoResize()
   // 数据基本回来后再做一次性高度归一（每个浏览器只跑一次）
@@ -450,6 +495,17 @@ function saveEditor() {
   persist()
 }
 function closeEditor() { editing.value = null }
+
+// 天气卡片内切换城市：写回该卡的 config.city 并落盘；编辑抽屉里的“城市”
+// 字段读的是同一份配置，下次打开抽屉自动同步；标题也跟着改成新城市
+function onCardCity(city, item) {
+  const target = layout.value.find((it) => it.i === item.i)
+  if (!target) return
+  const c = (city || '').trim()
+  target.config = { ...(target.config || {}), city: c }
+  if (target.type === 'weather') target.title = (c || '上海') + '天气'
+  persist()
+}
 
 onMounted(() => {
   loadLayout()
