@@ -17,7 +17,7 @@
 <script setup>
 defineProps({ config: { type: Object, default: () => ({}) }, title: { type: String, default: '' } })
 const links = [
-  { name: 'KPanel 运维', desc: '67.215.229.127:38083', url: 'http://67.215.229.127:38083/', icon: 'K', bg: '#eff6ff' },
+  { name: 'KPanel 运维', desc: 'kp.199060.xyz', url: 'https://kp.199060.xyz/', icon: 'K', bg: '#eff6ff' },
   { name: '订阅转换', desc: 'sub.199060.xyz', url: 'https://sub.199060.xyz/', icon: '转', bg: '#eff6ff' },
   { name: '老王导航', desc: '67.215.229.127:8080', url: 'http://67.215.229.127:8080/', icon: '导', bg: '#ecfdf5' },
   { name: 'GitHub', desc: 'tony-wang1990', url: 'https://github.com/tony-wang1990', icon: 'G', bg: '#f1f5f9' },

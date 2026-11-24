@@ -1,7 +1,7 @@
 <template>
   <div class="ops">
     <!-- KPanel 全功能运维面板（新窗口打开，不用 iframe：KPanel 安全头会挡 iframe） -->
-    <a class="kpanel-banner" href="http://67.215.229.127:38083/" target="_blank" rel="noopener">
+    <a class="kpanel-banner" href="https://kp.199060.xyz/" target="_blank" rel="noopener">
       <span class="kpanel-icon">K</span>
       <span class="kpanel-text">
         <span class="kpanel-title">KPanel 全功能运维面板</span>
