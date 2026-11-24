@@ -1,5 +1,15 @@
 <template>
   <div class="ops">
+    <!-- KPanel 全功能运维面板（新窗口打开，不用 iframe：KPanel 安全头会挡 iframe） -->
+    <a class="kpanel-banner" href="http://67.215.229.127:38083/" target="_blank" rel="noopener">
+      <span class="kpanel-icon">K</span>
+      <span class="kpanel-text">
+        <span class="kpanel-title">KPanel 全功能运维面板</span>
+        <span class="kpanel-desc">终端、文件管理、Nginx 站点、Docker、应用市场 —— 在新窗口打开 KPanel（自带登录）</span>
+      </span>
+      <span class="kpanel-open">打开 KPanel ↗</span>
+    </a>
+
     <!-- 未登录：登录框 -->
     <div v-if="authChecked && !loggedIn" class="card login-card">
       <div class="card-head">
@@ -428,6 +438,29 @@ onUnmounted(() => {
 
 <style scoped>
 .ops { display: flex; flex-direction: column; gap: 20px; }
+.kpanel-banner {
+  display: flex; align-items: center; gap: 14px;
+  padding: 16px 18px; border-radius: 14px;
+  background: #eff6ff; border: 1px solid #bfdbfe;
+  color: var(--text);
+}
+.kpanel-banner:hover { text-decoration: none; border-color: #93c5fd; box-shadow: var(--shadow); }
+.kpanel-icon {
+  width: 40px; height: 40px; border-radius: 12px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--blue); color: #fff; font-size: 18px; font-weight: 700;
+}
+.kpanel-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.kpanel-title { font-size: 15px; font-weight: 700; }
+.kpanel-desc { font-size: 12.5px; color: var(--text-2); line-height: 1.5; }
+.kpanel-open {
+  flex: none; padding: 8px 16px; border-radius: 99px;
+  background: var(--blue); color: #fff; font-size: 13px; font-weight: 600; white-space: nowrap;
+}
+@media (max-width: 720px) {
+  .kpanel-banner { flex-wrap: wrap; }
+  .kpanel-open { margin-left: 54px; }
+}
 .ops-bar { display: flex; justify-content: space-between; align-items: center; }
 .login-card { max-width: 480px; margin: 40px auto; width: 100%; }
 .login-desc { font-size: 13.5px; color: var(--text-2); line-height: 1.7; margin-bottom: 16px; }

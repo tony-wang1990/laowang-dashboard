@@ -81,7 +81,7 @@
       <OpsView />
       <footer class="foot">
         <span>老王数据看板 · 运维区</span>
-        <span>监控每 10 秒采样 · 容器操作与日志需要登录 · 网页终端、文件管理、Nginx 站点、多主机集群见 Roadmap</span>
+        <span>监控每 10 秒采样 · 容器操作与日志需要登录 · 全功能运维（终端、文件、Nginx）在 KPanel · 多主机集群见 Roadmap</span>
         <a href="https://github.com/tony-wang1990/laowang-dashboard" target="_blank" rel="noopener">GitHub 开源</a>
       </footer>
     </template>
