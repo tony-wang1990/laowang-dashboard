@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.*
+*.log
+.DS_Store
+# 注意：dist/ 是有意提交进仓库的 —— VPS 只有约 1GB 内存，
+# 部署时直接用预构建产物运行，不在 VPS 上跑 npm build。
+# 所以不要把 dist 加进 .gitignore。
+data/

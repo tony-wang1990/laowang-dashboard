@@ -1,0 +1,972 @@
+/**
+ * 老王数据看板 · 后端
+ * 零依赖（只用 Node 内置模块），既托管前端 dist，又提供 /api/* 聚合接口。
+ * 所有外部接口都有超时 + 优雅降级：挂了就返回 { ok:false }，前端显示“暂无数据”，绝不炸掉整页。
+ *
+ * 数据源全部是免费、免 key 的公开接口（开箱即用，零注册）：
+ *   天气 Open-Meteo / 加密货币 CoinGecko / 汇率 Frankfurter /
+ *   资讯 RSS 直连 / GitHub 公开 API / 一言 hitokoto / IP 信息 ip-api.com
+ * 和风天气仅为可选配置：设置环境变量 QWEATHER_KEY 后才启用，否则用 Open-Meteo。
+ */
+import http from 'node:http'
+import fs from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
+import crypto from 'node:crypto'
+import { execFile } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const DIST = path.join(__dirname, 'dist')
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data')
+const PORT = Number(process.env.PORT || 3000)
+const HOST = process.env.HOST || '0.0.0.0'
+
+// ---------- 小工具 ----------
+const cache = new Map() // key -> { at, ttl, value }
+async function cached(key, ttlMs, fn) {
+  const hit = cache.get(key)
+  if (hit && Date.now() - hit.at < ttlMs) return hit.value
+  const value = await fn()
+  cache.set(key, { at: Date.now(), ttl: ttlMs, value })
+  return value
+}
+
+async function fetchJson(url, { timeoutMs = 8000, headers = {} } = {}) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, headers })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return await res.json()
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function fetchText(url, { timeoutMs = 8000, headers = {} } = {}) {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, headers })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return await res.text()
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function execTimeout(cmd, args, timeoutMs) {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+      if (err) return resolve({ ok: false, error: String(err.message || err).slice(0, 200) })
+      resolve({ ok: true, stdout })
+    })
+  })
+}
+
+function ok(data) { return { ok: true, data, at: new Date().toISOString() } }
+function fail(error) { return { ok: false, error: String(error).slice(0, 200), at: new Date().toISOString() } }
+
+function parseRss(xml) {
+  const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)]
+  return items.map((m) => {
+    const grab = (tag) => {
+      const mm = m[1].match(new RegExp(`<${tag}>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</${tag}>`))
+      return mm ? mm[1].trim() : ''
+    }
+    return { title: grab('title'), url: grab('link'), date: grab('pubDate') }
+  }).filter((i) => i.title)
+}
+
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = ''
+    req.on('data', (chunk) => { body += chunk; if (body.length > 512 * 1024) { req.destroy(); reject(new Error('body too large')) } })
+    req.on('end', () => {
+      try { resolve(body ? JSON.parse(body) : {}) } catch { reject(new Error('invalid json')) }
+    })
+    req.on('error', reject)
+  })
+}
+
+// ---------- /api/system ----------
+function systemInfo() {
+  const cpus = os.cpus()
+  const load = os.loadavg()
+  const totalMem = os.totalmem()
+  const freeMem = os.freemem()
+  return {
+    hostname: os.hostname(),
+    platform: os.platform(),
+    arch: os.arch(),
+    cpuModel: cpus[0]?.model?.trim() || 'unknown',
+    cpuCount: cpus.length,
+    load1: +load[0].toFixed(2),
+    load5: +load[1].toFixed(2),
+    load15: +load[2].toFixed(2),
+    memTotalMB: Math.round(totalMem / 1024 / 1024),
+    memUsedMB: Math.round((totalMem - freeMem) / 1024 / 1024),
+    memUsedPct: +(((totalMem - freeMem) / totalMem) * 100).toFixed(1),
+    uptimeSec: Math.floor(os.uptime()),
+    node: process.version
+  }
+}
+
+async function diskInfo() {
+  // docker-compose 把宿主机 / 以只读挂在 /host，优先看宿主机磁盘；本地开发没有 /host 时看自身 /
+  const target = fs.existsSync('/host') ? '/host' : '/'
+  const r = await execTimeout('df', ['-k', target], 3000)
+  if (!r.ok) return null
+  const lines = r.stdout.trim().split('\n')
+  const parts = (lines[1] || '').trim().split(/\s+/)
+  if (parts.length < 5) return null
+  const total = Number(parts[1]) * 1024
+  const used = Number(parts[2]) * 1024
+  return {
+    totalGB: +(total / 1e9).toFixed(1),
+    usedGB: +(used / 1e9).toFixed(1),
+    usedPct: total ? +((used / total) * 100).toFixed(1) : 0
+  }
+}
+
+async function publicIp() {
+  try {
+    const d = await fetchJson('http://ip-api.com/json/?fields=status,query,country,city,isp', { timeoutMs: 5000 })
+    if (d.status !== 'success') return null
+    return { ip: d.query, country: d.country, city: d.city, isp: d.isp }
+  } catch { return null }
+}
+
+// ---------- 历史采样（图表卡片用）：每 30 秒采一次系统指标，保留最近 120 个点 ----------
+// 数据来源：本机实时采样，不是模拟数据。服务刚启动时点数较少，随时间积累。
+const history = []
+function sampleHistory() {
+  const s = systemInfo()
+  history.push({ t: Date.now(), load1: s.load1, memPct: s.memUsedPct })
+  if (history.length > 120) history.shift()
+}
+sampleHistory()
+setInterval(sampleHistory, 30_000)
+
+// ============================================================================
+// 运维板块（/api/ops/*）：10 秒采样监控 + Docker 管理 + 进程/磁盘
+// 监控数据放内存环形缓冲（24h，10s 一点）+ 每 5 分钟落盘 data/metrics.json，不引数据库。
+// 只读查询公开可看；所有写操作（启停容器、清理镜像、看日志）必须登录。
+// ============================================================================
+const METRICS_FILE = path.join(DATA_DIR, 'metrics.json')
+let opsMetrics = [] // { t, cpu, mem, load1, diskPct, up, down } up/down 单位 B/s
+let prevCpu = null
+let prevNet = null
+
+function cpuTimes() {
+  const cpus = os.cpus()
+  let idle = 0, total = 0
+  for (const c of cpus) {
+    idle += c.times.idle
+    total += c.times.user + c.times.nice + c.times.sys + c.times.idle + c.times.irq
+  }
+  return { idle, total }
+}
+function cpuUsagePct() {
+  const now = cpuTimes()
+  if (!prevCpu) { prevCpu = now; return 0 }
+  const idleDiff = now.idle - prevCpu.idle
+  const totalDiff = now.total - prevCpu.total
+  prevCpu = now
+  if (totalDiff <= 0) return 0
+  return +((1 - idleDiff / totalDiff) * 100).toFixed(1)
+}
+function netBytes() {
+  // 容器内默认只能看到容器自己的网络命名空间；
+  // docker-compose 把宿主机 /proc 以只读挂在 /host/proc，优先读宿主机的。
+  const candidates = ['/host/proc/net/dev', '/proc/net/dev']
+  for (const file of candidates) {
+    try {
+      const txt = fs.readFileSync(file, 'utf-8')
+      let rx = 0, tx = 0, found = false
+      for (const line of txt.split('\n')) {
+        const m = line.trim().match(/^([^:]+):\s*(.*)$/)
+        if (!m || m[1] === 'lo') continue
+        const f = m[2].trim().split(/\s+/)
+        rx += Number(f[0]) || 0
+        tx += Number(f[8]) || 0
+        found = true
+      }
+      if (found) return { rx, tx }
+    } catch { /* 试下一个 */ }
+  }
+  return null
+}
+function netRates() {
+  const now = netBytes()
+  if (!now || !prevNet) { prevNet = now; return { up: 0, down: 0 } }
+  const down = Math.max(0, (now.rx - prevNet.rx) / 10)
+  const up = Math.max(0, (now.tx - prevNet.tx) / 10)
+  prevNet = now
+  return { up: Math.round(up), down: Math.round(down) }
+}
+function loadOpsMetrics() {
+  try {
+    const arr = JSON.parse(fs.readFileSync(METRICS_FILE, 'utf-8'))
+    if (Array.isArray(arr)) opsMetrics = arr.filter((p) => Date.now() - p.t < 24 * 3600 * 1000)
+  } catch { /* 无文件或损坏 -> 从空开始 */ }
+}
+function saveOpsMetrics() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true })
+    fs.writeFileSync(METRICS_FILE + '.tmp', JSON.stringify(opsMetrics))
+    fs.renameSync(METRICS_FILE + '.tmp', METRICS_FILE)
+  } catch { /* 落盘失败不影响内存数据 */ }
+}
+async function sampleOpsMetrics() {
+  try {
+    const s = systemInfo()
+    const disk = await diskInfo()
+    const net = netRates()
+    opsMetrics.push({
+      t: Date.now(),
+      cpu: cpuUsagePct(),
+      mem: s.memUsedPct,
+      load1: s.load1,
+      diskPct: disk?.usedPct ?? null,
+      up: net.up,
+      down: net.down
+    })
+    if (opsMetrics.length > 8640) opsMetrics.shift() // 24h × 10s
+  } catch { /* 采样失败跳过一次 */ }
+}
+function metricsForRange(range) {
+  const span = range === '1h' ? 3600e3 : range === '6h' ? 6 * 3600e3 : 24 * 3600e3
+  const cutoff = Date.now() - span
+  let pts = opsMetrics.filter((p) => p.t >= cutoff)
+  if (pts.length > 300) {
+    const step = Math.ceil(pts.length / 300)
+    pts = pts.filter((_, i) => i % step === 0)
+  }
+  return pts
+}
+loadOpsMetrics()
+sampleOpsMetrics()
+setInterval(sampleOpsMetrics, 10_000)
+setInterval(saveOpsMetrics, 5 * 60 * 1000)
+
+// ---------- Docker Socket API（容器里没有 docker 命令行也能用） ----------
+function dockerApi(method, apiPath, body) {
+  return new Promise((resolve) => {
+    const req = http.request(
+      {
+        socketPath: '/var/run/docker.sock', path: apiPath, method, timeout: 8000,
+        headers: body ? { 'Content-Type': 'application/json' } : {}
+      },
+      (res) => {
+        const chunks = []
+        res.on('data', (c) => chunks.push(c))
+        res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks) }))
+      }
+    )
+    req.on('timeout', () => { req.destroy(); resolve({ status: 0, body: Buffer.alloc(0) }) })
+    req.on('error', () => resolve({ status: 0, body: Buffer.alloc(0) }))
+    if (body) req.write(JSON.stringify(body))
+    req.end()
+  })
+}
+function dockerAvailable() { return fs.existsSync('/var/run/docker.sock') }
+
+function calcCpuPct(stats) {
+  try {
+    const cpuDelta = stats.cpu_stats.cpu_usage.total_usage - stats.precpu_stats.cpu_usage.total_usage
+    const sysDelta = stats.cpu_stats.system_cpu_usage - stats.precpu_stats.system_cpu_usage
+    const cpus = stats.cpu_stats.online_cpus || os.cpus().length
+    if (sysDelta > 0 && cpuDelta >= 0) return +((cpuDelta / sysDelta) * cpus * 100).toFixed(1)
+  } catch { /* 忽略 */ }
+  return 0
+}
+function fmtBytes(n) {
+  if (n == null || isNaN(n)) return '—'
+  if (n < 1024) return n + ' B'
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
+  if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB'
+  return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB'
+}
+function demuxDockerLogs(buf) {
+  // Docker 日志是 multiplexed 流：每帧 8 字节头（1 字节流类型 + 3 字节保留 + 4 字节长度）+ 数据
+  let out = ''
+  let off = 0
+  while (off + 8 <= buf.length) {
+    const len = buf.readUInt32BE(off + 4)
+    if (off + 8 + len > buf.length) break
+    out += buf.slice(off + 8, off + 8 + len).toString('utf-8')
+    off += 8 + len
+  }
+  if (!out) out = buf.toString('utf-8') // 非 multiplexed（极少数情况）直接当文本
+  return out
+}
+
+// ---------- 运维登录（ADMIN_PASSWORD 环境变量；登录后发 httpOnly session cookie） ----------
+const opsSessions = new Map() // token -> expiresAt
+function adminEnabled() { return !!process.env.ADMIN_PASSWORD }
+function opsAuthed(req) {
+  const m = (req.headers.cookie || '').match(/(?:^|;\s*)ops_session=([A-Fa-f0-9]+)/)
+  if (!m) return false
+  const exp = opsSessions.get(m[1])
+  if (!exp || exp < Date.now()) { opsSessions.get(m[1]) && opsSessions.delete(m[1]); return false }
+  return true
+}
+function sha256(s) { return crypto.createHash('sha256').update(s).digest() }
+function checkPassword(input) {
+  if (!adminEnabled()) return false
+  const a = sha256(String(input || ''))
+  const b = sha256(process.env.ADMIN_PASSWORD)
+  return a.length === b.length && crypto.timingSafeEqual(a, b)
+}
+
+// ---------- /api/docker ----------
+// 优先走 Docker Socket API（容器里没有 docker 命令行也能用）；
+// socket 不可用时回落到 docker ps 命令行。
+async function dockerViaSocket() {
+  return new Promise((resolve) => {
+    const req = http.request(
+      { socketPath: '/var/run/docker.sock', path: '/containers/json', method: 'GET', timeout: 5000 },
+      (res) => {
+        let body = ''
+        res.on('data', (c) => { body += c })
+        res.on('end', () => {
+          try {
+            const arr = JSON.parse(body)
+            const containers = arr.map((c) => ({
+              name: (c.Names?.[0] || '').replace(/^\//, ''),
+              image: c.Image || '',
+              status: c.Status || '',
+              ports: (c.Ports || []).map((p) => `${p.PublicPort ? p.IP + ':' + p.PublicPort + '->' : ''}${p.PrivatePort}/${p.Type}`).join(', '),
+              running: c.State === 'running'
+            }))
+            resolve(ok({ count: containers.length, containers }))
+          } catch { resolve(fail('docker API 解析失败')) }
+        })
+      }
+    )
+    req.on('timeout', () => { req.destroy(); resolve(fail('docker API 超时')) })
+    req.on('error', (e) => resolve(fail('docker 不可用：' + String(e.message || e).slice(0, 100))))
+    req.end()
+  })
+}
+
+async function dockerPs() {
+  if (fs.existsSync('/var/run/docker.sock')) return dockerViaSocket()
+  const r = await execTimeout('docker', ['ps', '--format', '{{json .}}'], 5000)
+  if (!r.ok) return fail('docker 不可用：' + r.error)
+  const containers = r.stdout.trim().split('\n').filter(Boolean).map((line) => {
+    try {
+      const c = JSON.parse(line)
+      return {
+        name: c.Names || c.Name || '',
+        image: c.Image || '',
+        status: c.Status || '',
+        ports: c.Ports || '',
+        running: /Up/.test(c.Status || '')
+      }
+    } catch { return null }
+  }).filter(Boolean)
+  return ok({ count: containers.length, containers })
+}
+
+// ---------- /api/uptime ----------
+const UPTIME_TARGETS = [
+  { name: '订阅转换 · sub.199060.xyz', url: 'https://sub.199060.xyz/' },
+  { name: '老王导航 · :8080', url: 'http://67.215.229.127:8080/' },
+  { name: '订阅转换 · :38081', url: 'http://67.215.229.127:38081/' }
+]
+
+async function checkOne(t) {
+  const start = Date.now()
+  try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 6000)
+    const res = await fetch(t.url, { signal: ctrl.signal, method: 'GET', redirect: 'manual' })
+    clearTimeout(timer)
+    return { name: t.name, url: t.url, up: res.status < 500, status: res.status, ms: Date.now() - start }
+  } catch (e) {
+    return { name: t.name, url: t.url, up: false, status: 0, ms: Date.now() - start, error: String(e.message || e).slice(0, 80) }
+  }
+}
+
+// ---------- /api/github ----------
+const GH_REPOS = [
+  { owner: 'tony-wang1990', repo: 'laowang-sub-converter' },
+  { owner: 'tony-wang1990', repo: 'laowang-subscription' },
+  { owner: 'tony-wang1990', repo: 'laowang-nav' }
+]
+const GH_HEADERS = { 'User-Agent': 'laowang-dashboard', Accept: 'application/vnd.github+json' }
+
+async function githubRepos() {
+  const items = []
+  for (const { owner, repo } of GH_REPOS) {
+    try {
+      const [info, commits] = await Promise.all([
+        fetchJson(`https://api.github.com/repos/${owner}/${repo}`, { headers: GH_HEADERS, timeoutMs: 8000 }),
+        fetchJson(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=1`, { headers: GH_HEADERS, timeoutMs: 8000 })
+      ])
+      items.push({
+        name: repo,
+        fullName: info.full_name,
+        stars: info.stargazers_count,
+        forks: info.forks_count,
+        watchers: info.watchers_count,
+        language: info.language,
+        description: info.description,
+        url: info.html_url,
+        pushedAt: info.pushed_at,
+        lastCommit: commits?.[0] ? { message: commits[0].commit.message.split('\n')[0], sha: commits[0].sha.slice(0, 7), date: commits[0].commit.author?.date } : null
+      })
+    } catch (e) {
+      items.push({ name: repo, error: String(e.message || e).slice(0, 100) })
+    }
+  }
+  return ok({ repos: items })
+}
+
+async function githubTrending() {
+  const since = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString().slice(0, 10)
+  const data = await fetchJson(
+    `https://api.github.com/search/repositories?q=created:>${since}&sort=stars&order=desc&per_page=8`,
+    { headers: GH_HEADERS, timeoutMs: 8000 }
+  )
+  return ok({
+    items: (data.items || []).map((r) => ({
+      name: r.full_name, stars: r.stargazers_count, language: r.language,
+      description: r.description, url: r.html_url
+    }))
+  })
+}
+
+// ---------- 天气：Open-Meteo 默认；有 QWEATHER_KEY 时用和风（可选配置） ----------
+async function weatherFromOpenMeteo() {
+  const d = await fetchJson(
+    'https://api.open-meteo.com/v1/forecast?latitude=31.23&longitude=121.47&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&hourly=temperature_2m,weather_code&forecast_days=2&timezone=Asia%2FShanghai',
+    { timeoutMs: 8000 }
+  )
+  const now = new Date()
+  const hourKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:00`
+  const idx = Math.max(0, d.hourly.time.findIndex((t) => t >= hourKey))
+  const hours = (d.hourly.time.slice(idx, idx + 12) || []).map((t, i) => ({
+    time: t.slice(11, 16), temp: d.hourly.temperature_2m[idx + i], code: d.hourly.weather_code[idx + i]
+  }))
+  return ok({
+    source: 'open-meteo', sourceName: 'Open-Meteo（免费免 key）',
+    city: '上海', temp: d.current.temperature_2m, humidity: d.current.relative_humidity_2m,
+    wind: d.current.wind_speed_10m, code: d.current.weather_code, hours
+  })
+}
+
+async function weatherFromQWeather() {
+  const key = process.env.QWEATHER_KEY
+  const host = process.env.QWEATHER_HOST || 'devapi.qweather.com'
+  const loc = process.env.QWEATHER_LOCATION || '101020100' // 上海
+  const now = await fetchJson(`https://${host}/v7/weather/now?location=${loc}&key=${key}`, { timeoutMs: 8000 })
+  if (now.code !== '200') throw new Error('QWeather now code ' + now.code)
+  const hourly = await fetchJson(`https://${host}/v7/weather/24h?location=${loc}&key=${key}`, { timeoutMs: 8000 })
+  if (hourly.code !== '200') throw new Error('QWeather hourly code ' + hourly.code)
+  return ok({
+    source: 'qweather', sourceName: '和风天气',
+    city: '上海',
+    temp: Number(now.now.temp),
+    humidity: Number(now.now.humidity),
+    wind: Number(now.now.windSpeed),
+    code: null,
+    text: now.now.text,
+    hours: (hourly.hourly || []).slice(0, 12).map((h) => ({
+      time: h.fxTime.slice(11, 16), temp: Number(h.temp), code: null, text: h.text
+    }))
+  })
+}
+
+async function weather() {
+  if (process.env.QWEATHER_KEY) {
+    try { return await weatherFromQWeather() } catch (e) { /* 和风失败则回落到 Open-Meteo */ }
+  }
+  return weatherFromOpenMeteo()
+}
+
+// ---------- 布局存储 ----------
+function layoutPath() { return path.join(DATA_DIR, 'layout.json') }
+function loadLayout() {
+  try {
+    const raw = fs.readFileSync(layoutPath(), 'utf-8')
+    const parsed = JSON.parse(raw)
+    if (Array.isArray(parsed.layout)) return parsed.layout
+  } catch { /* 无文件或损坏 -> 返回 null，用默认布局 */ }
+  return null
+}
+function saveLayout(layout) {
+  fs.mkdirSync(DATA_DIR, { recursive: true })
+  const tmp = layoutPath() + '.tmp'
+  fs.writeFileSync(tmp, JSON.stringify({ layout, savedAt: new Date().toISOString() }, null, 2))
+  fs.renameSync(tmp, layoutPath())
+}
+
+// ---------- 路由 ----------
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg',
+  '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.map': 'application/json'
+}
+
+function sendJson(res, obj, status = 200) {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
+  res.end(JSON.stringify(obj))
+}
+
+const routes = {
+  '/api/system': async () => {
+    const [disk, ip] = await Promise.all([
+      diskInfo(),
+      cached('public-ip', 600_000, publicIp)
+    ])
+    return ok({ ...systemInfo(), disk, ip })
+  },
+  '/api/ip': async () => {
+    const ip = await cached('public-ip', 600_000, publicIp)
+    return ip ? ok(ip) : fail('IP 查询失败')
+  },
+  '/api/history': async () => ok({
+    source: '本机实时采样（每 30 秒一次，最近 1 小时）',
+    points: history
+  }),
+  '/api/docker': () => cached('docker', 30_000, dockerPs),
+  '/api/uptime': async () => ok({ targets: await Promise.all(UPTIME_TARGETS.map(checkOne)) }),
+  '/api/github': () => cached('github', 120_000, githubRepos),
+  '/api/trending': () => cached('trending', 600_000, githubTrending),
+  '/api/crypto': () => cached('crypto', 120_000, async () => {
+    const d = await fetchJson(
+      'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd,cny&include_24hr_change=true',
+      { timeoutMs: 8000 }
+    )
+    return ok({
+      coins: [
+        { id: 'bitcoin', name: '比特币 BTC', usd: d.bitcoin?.usd, cny: d.bitcoin?.cny, chg24: d.bitcoin?.usd_24h_change },
+        { id: 'ethereum', name: '以太坊 ETH', usd: d.ethereum?.usd, cny: d.ethereum?.cny, chg24: d.ethereum?.usd_24h_change },
+        { id: 'solana', name: 'Solana SOL', usd: d.solana?.usd, cny: d.solana?.cny, chg24: d.solana?.usd_24h_change }
+      ]
+    })
+  }),
+  '/api/rates': () => cached('rates', 600_000, async () => {
+    const d = await fetchJson('https://api.frankfurter.app/latest?from=USD&to=CNY,EUR,HKD,JPY', { timeoutMs: 8000 })
+    return ok({ base: 'USD', date: d.date, rates: d.rates })
+  }),
+  '/api/weather': () => cached('weather', 600_000, weather),
+  '/api/news': () => cached('news', 300_000, async () => {
+    const out = { hn: [], sspai: [] }
+    try {
+      const xml = await fetchText('https://hnrss.org/frontpage', { timeoutMs: 8000 })
+      out.hn = parseRss(xml).slice(0, 8)
+    } catch { /* 降级：空列表 */ }
+    try {
+      const xml = await fetchText('https://sspai.com/feed', { timeoutMs: 8000 })
+      out.sspai = parseRss(xml).slice(0, 8)
+    } catch { /* 降级：空列表 */ }
+    return ok(out)
+  }),
+  '/api/rss': async (req, url) => {
+    const feedUrl = url.searchParams.get('url') || ''
+    if (!/^https?:\/\//i.test(feedUrl)) return fail('只支持 http/https 的 RSS 地址')
+    const xml = await fetchText(feedUrl, { timeoutMs: 8000 })
+    return ok({ url: feedUrl, items: parseRss(xml).slice(0, 20) })
+  },
+  '/api/proxy': async (req, url) => {
+    const target = url.searchParams.get('url') || ''
+    if (!/^https?:\/\//i.test(target)) return fail('只支持 http/https 地址')
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 5000)
+    try {
+      const res = await fetch(target, { signal: ctrl.signal, headers: { 'User-Agent': 'laowang-dashboard' } })
+      const text = await res.text()
+      let json = null
+      try { json = JSON.parse(text) } catch { /* 非 JSON，返回原始文本 */ }
+      return ok({
+        status: res.status,
+        contentType: res.headers.get('content-type') || '',
+        json,
+        text: json ? undefined : text.slice(0, 500)
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+  },
+  '/api/quote': () => cached('quote', 300_000, async () => {
+    const d = await fetchJson('https://v1.hitokoto.cn/?c=d&c=i&c=k', { timeoutMs: 8000 })
+    return ok({ text: d.hitokoto, from: d.from_who || d.from || '' })
+  }),
+  '/api/layout': async (req) => {
+    if (req.method === 'GET') {
+      const layout = loadLayout()
+      return layout ? ok({ layout }) : fail('no saved layout')
+    }
+    if (req.method === 'POST') {
+      const body = await readJsonBody(req)
+      if (!Array.isArray(body.layout)) return fail('layout 必须是数组')
+      saveLayout(body.layout)
+      return ok({ saved: body.layout.length })
+    }
+    return fail('method not allowed')
+  }
+}
+
+// ---------- 运维接口 /api/ops/* ----------
+// 只读查询（监控、主机、容器列表、镜像、进程、磁盘）公开可看；
+// 写操作（启停容器、清理镜像、看日志）必须登录。
+async function opsDockerList() {
+  if (!dockerAvailable()) return fail('宿主机 Docker 不可用')
+  const r = await dockerApi('GET', '/containers/json?all=1')
+  if (r.status !== 200) return fail('Docker API 调用失败')
+  let list
+  try { list = JSON.parse(r.body.toString('utf-8')) } catch { return fail('Docker API 解析失败') }
+  const containers = await Promise.all(list.map(async (c) => {
+    let cpu = 0, memUsed = 0, memLimit = 0
+    try {
+      const s = await dockerApi('GET', `/containers/${c.Id}/stats?stream=false&one-shot=true`)
+      if (s.status === 200) {
+        const stats = JSON.parse(s.body.toString('utf-8'))
+        cpu = calcCpuPct(stats)
+        memUsed = stats.memory_stats?.usage || 0
+        memLimit = stats.memory_stats?.limit || 0
+      }
+    } catch { /* 单个容器 stats 失败不影响列表 */ }
+    return {
+      id: c.Id.slice(0, 12),
+      name: (c.Names?.[0] || '').replace(/^\//, ''),
+      image: c.Image || '',
+      state: c.State || '',
+      status: c.Status || '',
+      cpu,
+      memUsedMB: Math.round(memUsed / 1024 / 1024),
+      memLimitMB: Math.round(memLimit / 1024 / 1024),
+      memPct: memLimit ? +((memUsed / memLimit) * 100).toFixed(1) : 0,
+      ports: (c.Ports || []).map((pp) => `${pp.PublicPort ? pp.PublicPort + '->' : ''}${pp.PrivatePort}/${pp.Type}`).join(', ')
+    }
+  }))
+  return ok({ count: containers.length, containers })
+}
+
+async function opsImages() {
+  if (!dockerAvailable()) return fail('宿主机 Docker 不可用')
+  const r = await dockerApi('GET', '/images/json')
+  if (r.status !== 200) return fail('Docker API 调用失败')
+  let list
+  try { list = JSON.parse(r.body.toString('utf-8')) } catch { return fail('Docker API 解析失败') }
+  return ok({
+    images: list.map((im) => ({
+      id: (im.Id || '').replace('sha256:', '').slice(0, 12),
+      tags: (im.RepoTags || []).filter((t) => t !== '<none>:<none>'),
+      dangling: (im.RepoTags || []).every((t) => t === '<none>:<none>'),
+      sizeMB: Math.round((im.Size || 0) / 1024 / 1024),
+      created: im.Created ? new Date(im.Created * 1000).toISOString().slice(0, 10) : ''
+    }))
+  })
+}
+
+async function opsProcesses() {
+  // 容器是 Alpine（BusyBox ps 不支持 -eo/--sort），直接读 /proc 采样：
+  // 隔 1 秒读两次 utime/stime 算 CPU%，VmRSS 算内存。宿主机 /proc 以只读挂在 /host/proc。
+  const procRoot = fs.existsSync('/host/proc') ? '/host/proc' : '/proc'
+  const CLK = 100
+  const uptimeSec = os.uptime()
+  const cpuCount = os.cpus().length
+
+  function readProcs() {
+    const out = new Map()
+    let entries
+    try { entries = fs.readdirSync(procRoot) } catch { return out }
+    for (const name of entries) {
+      if (!/^\d+$/.test(name)) continue
+      try {
+        const stat = fs.readFileSync(`${procRoot}/${name}/stat`, 'utf-8')
+        const rparen = stat.lastIndexOf(')')
+        const after = stat.slice(rparen + 2).split(/\s+/)
+        // after[0]=state after[1]=ppid after[11]=utime after[12]=stime after[19]=starttime after[21]=rss(pages)
+        const utime = Number(after[11]) || 0
+        const stime = Number(after[12]) || 0
+        const startTicks = Number(after[19]) || 0
+        const rssPages = Number(after[21]) || 0
+        const comm = stat.slice(stat.indexOf('(') + 1, rparen)
+        let cmdline = ''
+        try { cmdline = fs.readFileSync(`${procRoot}/${name}/cmdline`, 'utf-8').replace(/\0/g, ' ').trim() } catch { /* 忽略 */ }
+        let uid = ''
+        try {
+          const status = fs.readFileSync(`${procRoot}/${name}/status`, 'utf-8')
+          const m = status.match(/^Uid:\s*(\d+)/m)
+          uid = m ? m[1] : ''
+        } catch { /* 忽略 */ }
+        out.set(name, {
+          pid: Number(name), ppid: Number(after[1]) || 0, uid,
+          cpuTicks: utime + stime,
+          memMB: Math.round((rssPages * 4096) / 1024 / 1024),
+          memPct: 0,
+          etimeSec: Math.max(0, Math.floor(uptimeSec - startTicks / CLK)),
+          command: cmdline || comm
+        })
+      } catch { /* 进程可能已退出，跳过 */ }
+    }
+    return out
+  }
+  function fmtEtime(sec) {
+    const d = Math.floor(sec / 86400)
+    const h = Math.floor((sec % 86400) / 3600)
+    const m = Math.floor((sec % 3600) / 60)
+    if (d > 0) return `${d}d ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`
+  }
+  const memTotalMB = os.totalmem() / 1024 / 1024
+  const first = readProcs()
+  if (!first.size) return fail('进程列表获取失败')
+  await new Promise((r) => setTimeout(r, 1000))
+  const second = readProcs()
+  const processes = []
+  for (const [pid, p2] of second) {
+    const p1 = first.get(pid)
+    if (!p1) continue
+    const cpu = +(((p2.cpuTicks - p1.cpuTicks) / CLK / 1 / cpuCount) * 100).toFixed(1)
+    processes.push({
+      pid: p2.pid, ppid: p2.ppid, user: p2.uid || '—',
+      cpu: cpu < 0 ? 0 : cpu,
+      mem: +(p2.memMB / memTotalMB * 100).toFixed(1),
+      etime: fmtEtime(p2.etimeSec),
+      command: p2.command.slice(0, 120) || '—'
+    })
+  }
+  processes.sort((a, b) => b.cpu - a.cpu || b.mem - a.mem)
+  return ok({ processes: processes.slice(0, 25) })
+}
+
+async function opsDisk() {
+  // 挂载点：读 /host/proc/mounts（容器内读到的是容器视角的挂载表）。
+  // 其中 /host 是宿主机根目录的 bind 挂载，把它当作宿主机 /；/host/ 下的其他条目是
+  // 透传进来的容器 overlay 挂载，要跳过；其余真实挂载点（/data 这类）按原样保留。
+  const mountsFile = fs.existsSync('/host/proc/mounts') ? '/host/proc/mounts' : '/proc/mounts'
+  const prefix = fs.existsSync('/host') ? '/host' : ''
+  let mounts = ['/']
+  try {
+    const txt = fs.readFileSync(mountsFile, 'utf-8')
+    const seen = new Set(['/'])
+    for (const line of txt.split('\n')) {
+      const f = line.split(/\s+/)
+      if (f.length < 3) continue
+      const [dev, mp, fstype] = f
+      if (mp === '/host' || mp === '/') continue // /host 就是宿主机 /，已在 mounts 里
+      if (mp.startsWith('/host/')) continue
+      if (!['ext4', 'xfs', 'btrfs', 'vfat'].includes(fstype)) continue
+      if (mp.startsWith('/sys') || mp.startsWith('/proc') || mp.startsWith('/dev') || mp.startsWith('/run')) continue
+      if (seen.has(mp)) continue
+      seen.add(mp)
+      mounts.push(mp)
+    }
+  } catch { /* 读不到就只看 / */ }
+  const targets = mounts.slice(0, 8).map((m) => (m === '/' ? prefix || '/' : prefix + m))
+  const disks = []
+  const r = await execTimeout('df', ['-k', ...targets], 5000)
+  if (r.ok) {
+    for (const line of r.stdout.trim().split('\n').slice(1)) {
+      const parts = line.trim().split(/\s+/)
+      if (parts.length < 6) continue
+      const total = Number(parts[1]) * 1024
+      const used = Number(parts[2]) * 1024
+      const rawMount = parts[5]
+      const mount = rawMount === (prefix || '/') ? '/' : rawMount.replace(prefix, '') || '/'
+      disks.push({
+        mount,
+        totalGB: +(total / 1e9).toFixed(1),
+        usedGB: +(used / 1e9).toFixed(1),
+        usedPct: total ? +((used / total) * 100).toFixed(1) : 0
+      })
+    }
+  }
+  if (!disks.length) {
+    // df 失败时兜底：至少返回根分区（diskInfo 已验证可用）
+    const d = await diskInfo()
+    if (d) disks.push({ mount: '/', totalGB: d.totalGB, usedGB: d.usedGB, usedPct: d.usedPct })
+  }
+  // 大目录 Top：后台异步算（du 扫大盘可能几十秒），先返回上次结果 + scanning 标记，绝不阻塞页面；
+  // 结果 10 分钟缓存。-x 不跨文件系统，避免扫进别的挂载点。
+  const topDirs = getTopDirs()
+  // Docker 磁盘占用（镜像/容器/卷），走 Docker API，快且准
+  let dockerDisk = null
+  if (dockerAvailable()) {
+    try {
+      const r3 = await dockerApi('GET', '/system/df')
+      if (r3.status === 200) {
+        const df = JSON.parse(r3.body.toString('utf-8'))
+        const sum = (arr) => (arr || []).reduce((s, x) => s + (x.Size || 0), 0)
+        dockerDisk = {
+          path: '/var/lib/docker（镜像+容器+卷）',
+          sizeMB: Math.round((sum(df.Images) + sum(df.Containers) + sum(df.Volumes)) / 1024 / 1024)
+        }
+      }
+    } catch { /* 忽略 */ }
+  }
+  const allTop = [...topDirs.data]
+  if (dockerDisk) allTop.push(dockerDisk)
+  allTop.sort((a, b) => b.sizeMB - a.sizeMB)
+  return ok({ disks, topDirs: allTop.slice(0, 10), scanning: topDirs.scanning })
+}
+
+// 大目录统计：后台算 + 缓存，请求只读缓存
+const topDirsCache = { data: [], at: 0, scanning: false }
+function getTopDirs() {
+  const prefix = fs.existsSync('/host') ? '/host' : ''
+  const fresh = Date.now() - topDirsCache.at < 600_000 && topDirsCache.data.length
+  if (!fresh && !topDirsCache.scanning) {
+    topDirsCache.scanning = true
+    const dirs = ['/opt', '/var/log', '/root', '/home', '/tmp', '/usr/local', '/srv', '/var/cache']
+    execTimeout('du', ['-sm', '-x', ...dirs.map((d) => prefix + d)], 90000).then((r2) => {
+      if (r2.ok) {
+        topDirsCache.data = r2.stdout.trim().split('\n').map((line) => {
+          const [size, p] = line.split(/\t/)
+          return { path: (p || '').replace(prefix, '') || '/', sizeMB: Number(size) || 0 }
+        }).sort((a, b) => b.sizeMB - a.sizeMB).slice(0, 10)
+        topDirsCache.at = Date.now()
+      }
+      topDirsCache.scanning = false
+    })
+  }
+  return { data: topDirsCache.data, scanning: topDirsCache.scanning }
+}
+
+async function handleOps(req, res, url) {
+  const p = url.pathname
+  const send = (obj, status = 200) => sendJson(res, obj, status)
+  try {
+    // --- 登录 ---
+    if (p === '/api/ops/auth/status') {
+      return send(ok({ loggedIn: opsAuthed(req), adminEnabled: adminEnabled() }))
+    }
+    if (p === '/api/ops/auth/login' && req.method === 'POST') {
+      const body = await readJsonBody(req)
+      if (!checkPassword(body.password)) return send(fail(adminEnabled() ? '口令不正确' : '未设置 ADMIN_PASSWORD'))
+      const token = crypto.randomBytes(32).toString('hex')
+      opsSessions.set(token, Date.now() + 24 * 3600 * 1000)
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+        'Set-Cookie': `ops_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400`
+      })
+      return res.end(JSON.stringify(ok({ loggedIn: true })))
+    }
+    if (p === '/api/ops/auth/logout' && req.method === 'POST') {
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Set-Cookie': 'ops_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'
+      })
+      return res.end(JSON.stringify(ok({ loggedIn: false })))
+    }
+
+    // --- 只读查询（公开） ---
+    if (p === '/api/ops/metrics') {
+      const range = url.searchParams.get('range') || '1h'
+      const points = metricsForRange(['1h', '6h', '24h'].includes(range) ? range : '1h')
+      return send(ok({ range, points, latest: points[points.length - 1] || null, count: points.length }))
+    }
+    if (p === '/api/ops/host') {
+      const [disk, ip] = await Promise.all([diskInfo(), cached('public-ip', 600_000, publicIp)])
+      return send(ok({
+        ...systemInfo(), disk, ip,
+        kernel: os.release(), osType: os.type(),
+        load: os.loadavg().map((v) => +v.toFixed(2))
+      }))
+    }
+    if (p === '/api/ops/docker') return send(await cached('ops-docker', 10_000, opsDockerList))
+    if (p === '/api/ops/images') return send(await cached('ops-images', 60_000, opsImages))
+    if (p === '/api/ops/processes') return send(await cached('ops-processes', 10_000, opsProcesses))
+    if (p === '/api/ops/disk') return send(await opsDisk())
+
+    // --- 写操作与日志：必须登录 ---
+    const needAuth = async () => {
+      if (!opsAuthed(req)) { send(fail('请先登录运维区'), 401); return false }
+      return true
+    }
+    const logMatch = p.match(/^\/api\/ops\/docker\/([0-9a-f]{12})\/logs$/)
+    if (logMatch && req.method === 'GET') {
+      if (!(await needAuth())) return
+      if (!dockerAvailable()) return send(fail('宿主机 Docker 不可用'))
+      const tail = Math.min(Number(url.searchParams.get('tail') || 200), 500)
+      const r = await dockerApi('GET', `/containers/${logMatch[1]}/logs?stdout=1&stderr=1&tail=${tail}`)
+      if (r.status !== 200) return send(fail('日志获取失败'))
+      return send(ok({ logs: demuxDockerLogs(r.body).slice(-20000) }))
+    }
+    const actionMatch = p.match(/^\/api\/ops\/docker\/([0-9a-f]{12})\/(start|stop|restart)$/)
+    if (actionMatch && req.method === 'POST') {
+      if (!(await needAuth())) return
+      if (!dockerAvailable()) return send(fail('宿主机 Docker 不可用'))
+      const [, id, action] = actionMatch
+      const query = action === 'stop' || action === 'restart' ? '?t=10' : ''
+      const r = await dockerApi('POST', `/containers/${id}/${action}${query}`)
+      if (r.status === 204 || r.status === 304) {
+        cache.delete('ops-docker')
+        return send(ok({ action, id }))
+      }
+      return send(fail(`容器${action}失败（HTTP ${r.status}）`))
+    }
+    if (p === '/api/ops/docker/prune' && req.method === 'POST') {
+      if (!(await needAuth())) return
+      if (!dockerAvailable()) return send(fail('宿主机 Docker 不可用'))
+      const r = await dockerApi('POST', '/images/prune')
+      if (r.status !== 200) return send(fail('清理失败'))
+      let pruned = []
+      try { pruned = JSON.parse(r.body.toString('utf-8')).ImagesDeleted || [] } catch { /* 忽略 */ }
+      cache.delete('ops-images')
+      cache.delete('ops-docker')
+      return send(ok({ deleted: pruned.length }))
+    }
+
+    return send(fail('unknown ops api'), 404)
+  } catch (e) {
+    return send(fail(e.message || e), 200)
+  }
+}
+
+const server = http.createServer(async (req, res) => {
+  try {
+    const url = new URL(req.url, `http://${req.headers.host}`)
+    const p = url.pathname
+
+    if (p === '/healthz') {
+      res.writeHead(200, { 'Content-Type': 'text/plain' })
+      return res.end('ok')
+    }
+    if (p.startsWith('/api/ops/')) return handleOps(req, res, url)
+    if (routes[p]) {
+      try {
+        const result = await routes[p](req, url)
+        return sendJson(res, result)
+      } catch (e) {
+        return sendJson(res, fail(e.message || e), 200)
+      }
+    }
+    if (p.startsWith('/api/')) return sendJson(res, fail('unknown api'), 404)
+
+    // 静态文件
+    let file = p === '/' ? '/index.html' : p
+    const filePath = path.join(DIST, decodeURIComponent(file))
+    if (!filePath.startsWith(DIST)) { res.writeHead(403); return res.end('forbidden') }
+    fs.readFile(filePath, (err, data) => {
+      if (err) {
+        // SPA fallback：未知路径回 index.html
+        fs.readFile(path.join(DIST, 'index.html'), (err2, data2) => {
+          if (err2) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('not found — 请先构建前端 (npm run build)') }
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+          res.end(data2)
+        })
+        return
+      }
+      res.writeHead(200, { 'Content-Type': MIME[path.extname(filePath)] || 'application/octet-stream' })
+      res.end(data)
+    })
+  } catch (e) {
+    res.writeHead(500, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(fail(e.message || e)))
+  }
+})
+
+server.listen(PORT, HOST, () => {
+  console.log(`laowang-dashboard listening on http://${HOST}:${PORT}`)
+})

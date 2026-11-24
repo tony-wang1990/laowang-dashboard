@@ -1,0 +1,32 @@
+# 老王数据看板 · docker-compose
+#
+# 注意：VPS 只有约 1GB 内存，所以这里不走镜像构建，
+# 直接用 node:20-alpine 镜像挂载仓库里预构建好的 dist/ 和 server.js 运行，
+# VPS 上不需要跑 npm build。server.js 是零依赖的 Node 服务。
+# 如需构建完整镜像，见 Dockerfile（多阶段构建，可在有足够内存的机器上跑 docker build）。
+
+services:
+  dashboard:
+    image: node:20-alpine
+    container_name: laowang-dashboard
+    working_dir: /app
+    command: ["node", "server.js"]
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # 运维区登录口令：从项目目录 .env 文件读取（部署时生成随机口令写进去，chmod 600）。
+      # 不设置时运维区的写操作全部拒绝登录。
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+    ports:
+      - "38082:3000"
+    volumes:
+      - ./server.js:/app/server.js:ro
+      - ./dist:/app/dist:ro
+      # 布局文件持久化（/api/layout 读写 data/layout.json）
+      - ./data:/app/data
+      # 让后端能读到宿主机 Docker 容器列表；没有 Docker 的机器上 /api/docker 会优雅降级
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # 运维监控用：宿主机根目录与 /proc 只读挂载，后端只读聚合数字，不读文件内容
+      - /:/host:ro
+      - /proc:/host/proc:ro
+    restart: unless-stopped

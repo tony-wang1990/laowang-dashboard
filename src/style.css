@@ -1,0 +1,99 @@
+/* 老王数据看板 · 浅色简约现代主题 */
+:root {
+  --bg: #f3f5f9;
+  --card: #ffffff;
+  --border: #e8ecf3;
+  --text: #0f172a;
+  --text-2: #475569;
+  --text-3: #94a3b8;
+  --blue: #2563eb;
+  --cyan: #0891b2;
+  --violet: #7c3aed;
+  --amber: #d97706;
+  --emerald: #059669;
+  --rose: #e11d48;
+  --radius: 18px;
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 8px 24px rgba(15, 23, 42, 0.05);
+  --shadow-hover: 0 2px 4px rgba(15, 23, 42, 0.06), 0 16px 32px rgba(15, 23, 42, 0.08);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ---------- 卡片 ---------- */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 20px 22px;
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  min-width: 0;
+}
+.card:hover { box-shadow: var(--shadow-hover); }
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.card-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  flex: none;
+}
+.card-title { font-size: 15px; font-weight: 650; letter-spacing: 0.02em; }
+.card-sub { font-size: 12px; color: var(--text-3); margin-left: auto; font-weight: 400; }
+.card-refresh { font-size: 11px; color: var(--text-3); cursor: pointer; border: none; background: none; padding: 2px 4px; }
+.card-refresh:hover { color: var(--blue); }
+
+.empty {
+  color: var(--text-3);
+  font-size: 13px;
+  padding: 18px 0;
+  text-align: center;
+}
+.loading { color: var(--text-3); font-size: 13px; padding: 18px 0; text-align: center; }
+
+/* ---------- 数字 / 指标 ---------- */
+.big-num { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.big-num small { font-size: 14px; font-weight: 500; color: var(--text-3); margin-left: 2px; }
+.label { font-size: 12px; color: var(--text-3); }
+.up { color: var(--emerald); }
+.down { color: var(--rose); }
+
+/* ---------- 进度条 ---------- */
+.bar { height: 8px; border-radius: 99px; background: #eef2f7; overflow: hidden; }
+.bar > i { display: block; height: 100%; border-radius: 99px; transition: width 0.5s ease; }
+
+/* ---------- 列表行 ---------- */
+.row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid #f1f4f8; font-size: 13.5px; }
+.row:first-of-type { border-top: none; }
+.row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- 状态点 ---------- */
+.status-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.status-dot.on { background: var(--emerald); box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.15); }
+.status-dot.off { background: var(--rose); box-shadow: 0 0 0 3px rgba(225, 29, 72, 0.12); }
+
+/* ---------- 标签 ---------- */
+.tag {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: #eff6ff;
+  color: var(--blue);
+  font-weight: 550;
+  white-space: nowrap;
+}
