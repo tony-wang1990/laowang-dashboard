@@ -11,6 +11,7 @@
       <div class="nav-tabs">
         <button class="nav-tab" :class="{ active: view === 'dashboard' }" @click="view = 'dashboard'">数据看板</button>
         <button class="nav-tab" :class="{ active: view === 'ops' }" @click="view = 'ops'">服务器看板</button>
+        <button class="nav-tab" :class="{ active: view === 'briefings' }" @click="view = 'briefings'">早报归档</button>
       </div>
     </nav>
 
@@ -82,11 +83,20 @@
     </footer>
     </template>
 
-    <template v-else>
+    <template v-else-if="view === 'ops'">
       <OpsView />
       <footer class="foot">
         <span>老王数据看板 · 服务器看板</span>
         <span>监控每 10 秒采样 · 本页只读查看 · 全功能运维（终端、文件、Nginx）在 KPanel · 多主机集群见 Roadmap</span>
+        <a href="https://github.com/tony-wang1990/laowang-dashboard" target="_blank" rel="noopener">GitHub 开源</a>
+      </footer>
+    </template>
+
+    <template v-else>
+      <BriefingArchive />
+      <footer class="foot">
+        <span>老王数据看板 · 早报归档</span>
+        <span>每天 07:00 的早间简报全文存档 · 每天只存一期，不重复</span>
         <a href="https://github.com/tony-wang1990/laowang-dashboard" target="_blank" rel="noopener">GitHub 开源</a>
       </footer>
     </template>
@@ -141,6 +151,7 @@ import RssCard from './components/RssCard.vue'
 import CustomApiCard from './components/CustomApiCard.vue'
 import IframeCard from './components/IframeCard.vue'
 import OpsView from './components/OpsView.vue'
+import BriefingArchive from './components/BriefingArchive.vue'
 import { CARD_TYPES, cardTypeOf, newCard, DEFAULT_LAYOUT } from './cards.js'
 
 const COMPONENTS = {
@@ -525,11 +536,13 @@ onMounted(() => {
   loadLayout()
   nextTick(setupAutoResize)
   window.addEventListener('resize', onWinResize)
-  // 支持 #ops 深链直达服务器看板
-  if (window.location.hash === '#ops') view.value = 'ops'
-  window.addEventListener('hashchange', () => {
-    view.value = window.location.hash === '#ops' ? 'ops' : 'dashboard'
-  })
+  // 支持 #ops / #briefings 深链直达服务器看板 / 早报归档
+  const hashView = () => {
+    const h = window.location.hash
+    return h === '#ops' ? 'ops' : h === '#briefings' ? 'briefings' : 'dashboard'
+  }
+  view.value = hashView()
+  window.addEventListener('hashchange', () => { view.value = hashView() })
 })
 onUnmounted(() => {
   cardObserver?.disconnect()
@@ -539,7 +552,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', onWinResize)
 })
 watch(view, (v) => {
-  const hash = v === 'ops' ? '#ops' : '#'
+  const hash = v === 'ops' ? '#ops' : v === 'briefings' ? '#briefings' : '#'
   if (window.location.hash !== hash) history.replaceState(null, '', hash === '#' ? window.location.pathname : hash)
 })
 </script>
@@ -645,8 +658,10 @@ watch(view, (v) => {
 }
 @media (max-width: 720px) {
   .page { padding: 16px 14px 12px; }
-  /* 窄屏：英文副标收掉、徽章和字号缩小，品牌区不挤 tab、不溢出 */
-  .topnav { gap: 10px; }
+  /* 窄屏：品牌独占一行、tab 组另起一行均分——三个 tab 后一行放不下会挤掉品牌名 */
+  .topnav { gap: 10px; flex-wrap: wrap; }
+  .nav-tabs { flex: 1 1 100%; }
+  .nav-tab { flex: 1; padding: 7px 8px; text-align: center; white-space: nowrap; }
   .brand-sub { display: none; }
   .brand-badge { width: 30px; height: 30px; border-radius: 10px; font-size: 17px; }
   .brand-name { font-size: 15px; }

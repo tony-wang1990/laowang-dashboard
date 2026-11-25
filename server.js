@@ -963,6 +963,31 @@ const routes = {
       return layout ? ok({ layout }) : fail('no saved layout')
     }
     return fail('method not allowed')
+  },
+  // 早报归档：只读。简报全文存在 data/briefings.json（git 不提交），
+  // 由每日简报任务经 SSH + scripts/save-briefing.py 按日期幂等写入；
+  // 这里只读文件、不提供任何写接口（公开写接口会被滥用）。
+  // 文件不存在或损坏 -> 返回空列表，不报错。
+  '/api/briefings': async () => {
+    try {
+      const raw = fs.readFileSync(path.join(DATA_DIR, 'briefings.json'), 'utf-8')
+      const parsed = JSON.parse(raw)
+      const issues = Array.isArray(parsed.issues) ? parsed.issues : []
+      issues.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+      return ok({
+        count: issues.length,
+        issues: issues.map((it) => ({
+          date: it.date || '',
+          title: it.title || (it.date || ''),
+          sections: Array.isArray(it.sections) ? it.sections.map((s) => ({
+            heading: s.heading || '',
+            lines: Array.isArray(s.lines) ? s.lines.map(String) : []
+          })) : []
+        }))
+      })
+    } catch {
+      return ok({ count: 0, issues: [] })
+    }
   }
 }
 

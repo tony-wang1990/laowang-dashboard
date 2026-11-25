@@ -95,6 +95,13 @@
 - 多主机集群管理
 - AI 助手
 
+## 早报归档
+
+顶部导航点 **「早报归档」** 进入：每天 07:00 发到聊天里的早间简报，这里也留一份全文存档（最新一期在最上面，往期按日期往下排），写日报时直接打开看，不用在聊天记录里翻。
+
+- 简报全文保存在 VPS 的 `data/briefings.json`（git 不提交，只存在服务器上），每天只存一期，同一天不会重复、不会覆盖。
+- 归档是只读的：`GET /api/briefings` 公开可看；写入由每日简报任务在发完简报后经 SSH + `scripts/save-briefing.py` 完成，不经过任何公开写接口。
+
 ## 数据来源（全部免费免 key）
 
 | 数据 | 来源 | 说明 |
@@ -180,6 +187,7 @@ docker run -d --name laowang-dashboard -p 38082:3000 \
 | `GET /api/rss?url=…` | 任意 RSS 订阅源代理拉取 |
 | `GET /api/proxy?url=…` | 任意 http(s) 接口代理（自定义 API 卡片用，5 秒超时） |
 | `GET / POST /api/layout` | 看板布局：GET 只读（存 `data/layout.json` 的最后一次保存）；POST 已关闭，布局只保存在浏览器 localStorage |
+| `GET /api/briefings` | 早报归档：全部期数（最新在前），每期含日期、标题和全文分段；文件不存在时返回空列表 |
 | `GET /api/ops/hosts` | 主机列表（本机 + KPanel 集群主机，含在线状态；`kpanelConfigured` 指示是否配了 KPanel 凭据） |
 | `GET /api/ops/metrics?range=1h\|6h\|24h&host=<id>` | 服务器看板监控历史曲线（本机：后端 10 秒采样；远程：KPanel 集群历史） |
 | `GET /api/ops/host?host=<id>` | 服务器看板主机信息（`host` 省略或 `local` = 本机） |
